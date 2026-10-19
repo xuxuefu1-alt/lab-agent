@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { login as loginApi } from '../api/auth'
+import { getUserInfo, normalizeUser, updateUserInfo } from '../api/user'
 import { TOKEN_KEY, USER_KEY, getStoredToken } from '../constants/auth'
 
 function readUser() {
@@ -16,12 +17,28 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref(readUser())
   const isAuthenticated = computed(() => Boolean(token.value))
 
+  function persistUser(nextUser) {
+    user.value = normalizeUser(nextUser)
+    localStorage.setItem(USER_KEY, JSON.stringify(user.value))
+  }
+
   async function login(credentials) {
     const result = await loginApi(credentials)
     token.value = result.token
-    user.value = result.user
     localStorage.setItem(TOKEN_KEY, result.token)
-    localStorage.setItem(USER_KEY, JSON.stringify(result.user))
+    persistUser(result.user)
+  }
+
+  async function refreshUser() {
+    const result = await getUserInfo()
+    persistUser(result)
+    return user.value
+  }
+
+  async function updateUser(profile) {
+    const result = await updateUserInfo(profile)
+    persistUser(result)
+    return user.value
   }
 
   function logout() {
@@ -40,6 +57,8 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     isAuthenticated,
     login,
+    refreshUser,
+    updateUser,
     logout,
   }
 })

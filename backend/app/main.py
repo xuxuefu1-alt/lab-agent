@@ -2,17 +2,19 @@ from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 
 from app.model.user import User
+from app.model.laboratory import Laboratory
+from app.model.equipment import Equipment
 from app.database import Base, engine
 from app.api import api
 # 跨域中间件
-from starlette.middleware.cors import CORSMiddleware 
+from starlette.middleware.cors import CORSMiddleware
 
 # 导入异常处理器
 from app.common.exceptions import (
     BusinessExceptions,
     bussiness_exceptions_hadler,
     http_exceptions_hadler,
-    validation_exceptions_hadler, 
+    validation_exceptions_hadler,
     global_exceptions_hadler,
 )
 

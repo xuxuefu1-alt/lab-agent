@@ -5,6 +5,8 @@ import RegisterView from '../views/RegisterView.vue'
 import DashboardLayout from '../layouts/DashboardLayout.vue'
 import DashboardHomeView from '../views/dashboard/DashboardHomeView.vue'
 import AiAssistantView from '../views/dashboard/AiAssistantView.vue'
+import LaboratoryView from '../views/dashboard/LaboratoryView.vue'
+import EquipmentView from '../views/dashboard/EquipmentView.vue'
 import PlaceholderView from '../views/dashboard/PlaceholderView.vue'
 
 const router = createRouter({
@@ -46,13 +48,13 @@ const router = createRouter({
         {
           path: 'laboratories',
           name: 'laboratories',
-          component: PlaceholderView,
+          component: LaboratoryView,
           meta: { title: '实验室管理' },
         },
         {
           path: 'equipment',
           name: 'equipment',
-          component: PlaceholderView,
+          component: EquipmentView,
           meta: { title: '设备列表管理' },
         },
         {
