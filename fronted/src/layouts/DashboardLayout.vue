@@ -41,6 +41,7 @@ const menuItems = [
   { route: '/laboratories', label: '实验室管理', icon: House },
   { route: '/equipment', label: '设备列表管理', icon: Setting },
   { route: '/users', label: '用户管理', icon: User },
+  { route: '/bookings', label: '预约管理', icon: Postcard },
 ]
 
 const activeTitle = computed(() => route.meta.title || '系统首页')

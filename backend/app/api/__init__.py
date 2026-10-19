@@ -5,6 +5,8 @@ from app.api.upload import router as file_router
 from app.api.ai import router as ai_router
 from app.api.laboratory import router as laboratory_router
 from app.api.equipment import router as equipment_router
+from app.api.admin_user import router as admin_user_router
+from app.api.booking import router as booking_router
 
 api = APIRouter(prefix="/api")
 
@@ -14,3 +16,5 @@ api.include_router(file_router)
 api.include_router(ai_router)
 api.include_router(laboratory_router)
 api.include_router(equipment_router)
+api.include_router(admin_user_router)
+api.include_router(booking_router)

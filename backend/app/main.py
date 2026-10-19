@@ -4,6 +4,7 @@ from fastapi.exceptions import RequestValidationError
 from app.model.user import User
 from app.model.laboratory import Laboratory
 from app.model.equipment import Equipment
+from app.model.booking import Booking
 from app.database import Base, engine
 from app.api import api
 # 跨域中间件

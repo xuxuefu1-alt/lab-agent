@@ -7,6 +7,8 @@ import DashboardHomeView from '../views/dashboard/DashboardHomeView.vue'
 import AiAssistantView from '../views/dashboard/AiAssistantView.vue'
 import LaboratoryView from '../views/dashboard/LaboratoryView.vue'
 import EquipmentView from '../views/dashboard/EquipmentView.vue'
+import UserManagementView from '../views/dashboard/UserManagementView.vue'
+import BookingManagementView from '../views/dashboard/BookingManagementView.vue'
 import PlaceholderView from '../views/dashboard/PlaceholderView.vue'
 
 const router = createRouter({
@@ -60,8 +62,14 @@ const router = createRouter({
         {
           path: 'users',
           name: 'users',
-          component: PlaceholderView,
+          component: UserManagementView,
           meta: { title: '用户管理' },
+        },
+        {
+          path: 'bookings',
+          name: 'bookings',
+          component: BookingManagementView,
+          meta: { title: '预约管理' },
         },
       ],
     },
