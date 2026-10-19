@@ -366,18 +366,22 @@ onMounted(() => {
         </el-form-item>
 
         <el-form-item label="开始时间" prop="start_time">
-          <el-input
+          <el-date-picker
             v-model="formData.start_time"
-            placeholder="YYYY-MM-DD HH:mm"
-            maxlength="16"
+            type="datetime"
+            placeholder="选择开始时间"
+            format="YYYY-MM-DD HH:mm"
+            value-format="YYYY-MM-DD HH:mm"
           />
         </el-form-item>
 
         <el-form-item label="结束时间" prop="end_time">
-          <el-input
+          <el-date-picker
             v-model="formData.end_time"
-            placeholder="YYYY-MM-DD HH:mm"
-            maxlength="16"
+            type="datetime"
+            placeholder="选择结束时间"
+            format="YYYY-MM-DD HH:mm"
+            value-format="YYYY-MM-DD HH:mm"
           />
         </el-form-item>
 

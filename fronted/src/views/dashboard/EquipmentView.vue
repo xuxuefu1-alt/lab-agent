@@ -474,10 +474,12 @@ onMounted(() => {
         </el-form-item>
 
         <el-form-item label="购入日期" prop="purchase_date">
-          <el-input
+          <el-date-picker
             v-model="formData.purchase_date"
-            placeholder="YYYY-MM-DD"
-            maxlength="10"
+            type="date"
+            placeholder="选择购入日期"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD"
           />
         </el-form-item>
 
