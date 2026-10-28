@@ -96,7 +96,6 @@ function resetForm() {
 }
 
 function openDialog(row = null) {
-  resetForm()
   if (row) {
     isEditing.value = true
     dialogTitle.value = '编辑用户'
@@ -105,6 +104,7 @@ function openDialog(row = null) {
   } else {
     isEditing.value = false
     dialogTitle.value = '添加用户'
+    resetForm()
   }
   dialogVisible.value = true
 }
@@ -115,7 +115,8 @@ async function saveForm() {
 
   try {
     let response
-    if (isEditing.value) {
+    // 双重保险：检查 id 和 isEditing 状态
+    if (isEditing.value && formData.id) {
       const updateData = {
         name: formData.name,
         email: formData.email,

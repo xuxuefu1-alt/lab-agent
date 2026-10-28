@@ -109,7 +109,6 @@ function resetForm() {
 }
 
 function openDialog(row = null) {
-  resetForm()
   if (row && authStore.user.role === 'admin') {
     isEditing.value = true
     dialogTitle.value = '编辑预约'
@@ -117,6 +116,7 @@ function openDialog(row = null) {
   } else {
     isEditing.value = false
     dialogTitle.value = '创建预约'
+    resetForm()
   }
   dialogVisible.value = true
 }
@@ -127,7 +127,8 @@ async function saveForm() {
 
   try {
     let response
-    if (isEditing.value) {
+    // 双重保险：检查 id 和 isEditing 状态
+    if (isEditing.value && formData.id) {
       response = await booking.update(formData.id, {
         start_time: formData.start_time,
         end_time: formData.end_time,

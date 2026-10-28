@@ -191,7 +191,6 @@ function resetForm() {
 }
 
 async function openDialog(row = null) {
-  resetForm()
   if (row) {
     isEditing.value = true
     dialogTitle.value = '编辑设备'
@@ -199,6 +198,7 @@ async function openDialog(row = null) {
   } else {
     isEditing.value = false
     dialogTitle.value = '添加设备'
+    resetForm()
   }
   dialogVisible.value = true
 }
@@ -209,7 +209,8 @@ async function saveForm() {
 
   try {
     let response
-    if (isEditing.value) {
+    // 双重保险：检查 id 和 isEditing 状态
+    if (isEditing.value && formData.id) {
       response = await equipment.update(formData.id, {
         name: formData.name,
         equipment_type: formData.equipment_type,
