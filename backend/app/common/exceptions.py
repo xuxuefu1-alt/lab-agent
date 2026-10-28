@@ -34,9 +34,25 @@ async def http_exceptions_hadler(request: Request, exc: HTTPException):
 
 
 async def validation_exceptions_hadler(request: Request, exc: RequestValidationError):
+    print('='*50)
+    print('参数验证错误详情:')
+    print('错误信息:', exc.errors())
+    print('请求体:', await request.body())
+    print('='*50)
+
+    # 获取详细的错误信息
+    errors = exc.errors()
+    error_messages = []
+    for error in errors:
+        field = '.'.join(str(loc) for loc in error['loc'])
+        msg = error['msg']
+        error_messages.append(f"{field}: {msg}")
+
+    detailed_message = "请求参数错误: " + "; ".join(error_messages)
+
     return JSONResponse(
         status_code=422,
-        content=Respones.error(code=422, message="请求参数错误").model_dump(),
+        content=Respones.error(code=422, message=detailed_message).model_dump(),
     )
 
 

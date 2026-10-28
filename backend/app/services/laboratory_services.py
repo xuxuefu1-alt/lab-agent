@@ -8,6 +8,16 @@ class LaboratoryService:
     @staticmethod
     def create_laboratory(db: Session, laboratory: LaboratoryCreate) -> Laboratory:
         """创建实验室"""
+        print('='*50)
+        print('接收到的实验室数据:')
+        print(f'  name: {laboratory.name} (type: {type(laboratory.name).__name__})')
+        print(f'  description: {laboratory.description} (type: {type(laboratory.description).__name__})')
+        print(f'  location: {laboratory.location} (type: {type(laboratory.location).__name__})')
+        print(f'  capacity: {laboratory.capacity} (type: {type(laboratory.capacity).__name__})')
+        print(f'  manager_id: {laboratory.manager_id} (type: {type(laboratory.manager_id).__name__})')
+        print(f'  status: {laboratory.status} (type: {type(laboratory.status).__name__})')
+        print('='*50)
+
         db_laboratory = Laboratory(
             name=laboratory.name,
             description=laboratory.description,
