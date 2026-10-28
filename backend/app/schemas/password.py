@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChangePasswordRequest(BaseModel):
@@ -13,6 +13,12 @@ class ChangePasswordRequest(BaseModel):
         if self.old_password == self.new_password:
             raise ValueError("新密码不能与旧密码相同")
         return True
+
+
+    @model_validator(mode="after")
+    def validate_passwords_model(self):
+        self.validate_passwords()
+        return self
 
 
 class ChangePasswordResponse(BaseModel):

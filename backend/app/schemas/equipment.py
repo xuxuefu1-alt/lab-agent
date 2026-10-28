@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -31,6 +33,6 @@ class EquipmentUpdate(BaseModel):
 
 class EquipmentResponse(EquipmentBase):
     id: int
-    create_time: str | None = None
-    update_time: str | None = None
+    create_time: datetime | None = None
+    update_time: datetime | None = None
     model_config = ConfigDict(from_attributes=True)

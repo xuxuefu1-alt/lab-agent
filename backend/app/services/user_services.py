@@ -71,7 +71,11 @@ class UserService:
         """更新用户信息"""
         user = UserService.get_user_by_id(db, user_id)
 
-        update_data = user_data.model_dump(exclude_unset=True)
+        update_data = (
+            user_data.model_dump(exclude_unset=True)
+            if hasattr(user_data, "model_dump")
+            else dict(user_data)
+        )
         for field, value in update_data.items():
             setattr(user, field, value)
 
@@ -89,7 +93,15 @@ class UserService:
         return {"message": "用户已删除"}
 
     @staticmethod
-    def create_user(db: Session, username: str, password: str, name: str, role: str) -> User:
+    def create_user(
+        db: Session,
+        username: str,
+        password: str,
+        name: str,
+        role: str,
+        email: str | None = None,
+        phone: str | None = None,
+    ) -> User:
         """创建用户"""
         # 检查用户名是否已存在
         existing_user = db.query(User).filter(User.username == username).first()
@@ -101,6 +113,8 @@ class UserService:
             password=hash_password(password),
             name=name,
             role=role,
+            email=email,
+            phone=phone,
             status=1
         )
         db.add(user)

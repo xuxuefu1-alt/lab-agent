@@ -39,7 +39,7 @@ async def get_laboratory(
 @router.get("", response_model=success_response(dict))
 async def get_laboratories(
     skip: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100),
+    limit: int = Query(10, ge=1, le=1000),
     keyword: str | None = Query(None),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
@@ -51,10 +51,14 @@ async def get_laboratories(
         laboratories = LaboratoryService.get_all_laboratories(db, skip, limit)
 
     total = LaboratoryService.get_laboratories_count(db)
+
+    # 转换为 Pydantic 模型
+    items = [LaboratoryResponse.model_validate(lab) for lab in laboratories]
+
     return {
         "code": 200,
         "data": {
-            "items": laboratories,
+            "items": items,
             "total": total,
             "skip": skip,
             "limit": limit,

@@ -35,7 +35,7 @@ class BookingResponse(BookingBase):
     status: str
     reject_reason: str | None = None
     approved_by: int | None = None
-    approved_time: str | None = None
-    create_time: str | None = None
-    update_time: str | None = None
+    approved_time: datetime | None = None
+    create_time: datetime | None = None
+    update_time: datetime | None = None
     model_config = ConfigDict(from_attributes=True)

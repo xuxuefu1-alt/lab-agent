@@ -1,4 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from datetime import datetime
 
 
 class LaboratoryBase(BaseModel):
@@ -33,6 +34,7 @@ class LaboratoryUpdate(BaseModel):
 
 class LaboratoryResponse(LaboratoryBase):
     id: int
-    create_time: str | None = None
-    update_time: str | None = None
+    create_time: datetime
+    update_time: datetime
+
     model_config = ConfigDict(from_attributes=True)

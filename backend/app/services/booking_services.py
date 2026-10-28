@@ -1,33 +1,55 @@
-from sqlalchemy.orm import Session
 from datetime import datetime
-from app.model.booking import Booking
-from app.schemas.booking import BookingCreate, BookingUpdate, BookingApprove
+
+from sqlalchemy.orm import Session
+
 from app.common.exceptions import BusinessExceptions
+from app.model.booking import Booking
+from app.schemas.booking import BookingApprove, BookingCreate, BookingUpdate
+
+
+PENDING = "\u5f85\u5ba1\u6838"
+APPROVED = "\u5df2\u6279\u51c6"
+REJECTED = "\u5df2\u62d2\u7edd"
+CANCELLED = "\u5df2\u53d6\u6d88"
 
 
 class BookingService:
     @staticmethod
-    def create_booking(db: Session, user_id: int, booking: BookingCreate) -> Booking:
-        """创建预约"""
-        # 验证时间格式
+    def _parse_time(value: str) -> datetime:
         try:
-            start = datetime.strptime(booking.start_time, "%Y-%m-%d %H:%M")
-            end = datetime.strptime(booking.end_time, "%Y-%m-%d %H:%M")
-            if start >= end:
-                raise BusinessExceptions("结束时间必须晚于开始时间")
-        except ValueError:
-            raise BusinessExceptions("时间格式错误，应为 YYYY-MM-DD HH:mm")
+            return datetime.strptime(value, "%Y-%m-%d %H:%M")
+        except ValueError as exc:
+            raise BusinessExceptions("Invalid time format; expected YYYY-MM-DD HH:mm") from exc
 
-        # 检查时间冲突
-        conflicted = db.query(Booking).filter(
-            Booking.laboratory_id == booking.laboratory_id,
-            Booking.status.in_(["待审核", "已批准"]),
-            Booking.start_time < booking.end_time,
-            Booking.end_time > booking.start_time,
-        ).first()
+    @staticmethod
+    def _ensure_no_conflict(
+        db: Session,
+        laboratory_id: int,
+        start: datetime,
+        end: datetime,
+        exclude_booking_id: int | None = None,
+    ) -> None:
+        query = db.query(Booking).filter(
+            Booking.laboratory_id == laboratory_id,
+            Booking.status.in_([PENDING, APPROVED]),
+        )
+        if exclude_booking_id is not None:
+            query = query.filter(Booking.id != exclude_booking_id)
 
-        if conflicted:
-            raise BusinessExceptions("该时间段已被预约")
+        for existing in query.all():
+            existing_start = BookingService._parse_time(existing.start_time)
+            existing_end = BookingService._parse_time(existing.end_time)
+            if existing_start < end and existing_end > start:
+                raise BusinessExceptions("The selected time slot is already booked")
+
+    @staticmethod
+    def create_booking(db: Session, user_id: int, booking: BookingCreate) -> Booking:
+        start = BookingService._parse_time(booking.start_time)
+        end = BookingService._parse_time(booking.end_time)
+        if start >= end:
+            raise BusinessExceptions("End time must be later than start time")
+
+        BookingService._ensure_no_conflict(db, booking.laboratory_id, start, end)
 
         db_booking = Booking(
             laboratory_id=booking.laboratory_id,
@@ -37,9 +59,8 @@ class BookingService:
             purpose=booking.purpose,
             student_count=booking.student_count,
             remarks=booking.remarks,
-            status="待审核",
+            status=PENDING,
         )
-
         db.add(db_booking)
         db.commit()
         db.refresh(db_booking)
@@ -47,52 +68,56 @@ class BookingService:
 
     @staticmethod
     def get_booking_by_id(db: Session, booking_id: int) -> Booking:
-        """根据ID获取预约"""
         booking = db.query(Booking).filter(Booking.id == booking_id).first()
         if not booking:
-            raise BusinessExceptions("预约不存在")
+            raise BusinessExceptions("Booking not found")
         return booking
 
     @staticmethod
     def get_all_bookings(db: Session, skip: int = 0, limit: int = 10) -> list[Booking]:
-        """获取所有预约"""
         return db.query(Booking).offset(skip).limit(limit).all()
 
     @staticmethod
     def get_bookings_count(db: Session) -> int:
-        """获取预约总数"""
         return db.query(Booking).count()
 
     @staticmethod
     def get_user_bookings(db: Session, user_id: int, skip: int = 0, limit: int = 10) -> list[Booking]:
-        """获取用户的预约列表"""
         return db.query(Booking).filter(Booking.user_id == user_id).offset(skip).limit(limit).all()
 
     @staticmethod
     def get_user_bookings_count(db: Session, user_id: int) -> int:
-        """获取用户预约总数"""
         return db.query(Booking).filter(Booking.user_id == user_id).count()
 
     @staticmethod
     def get_bookings_by_status(db: Session, status: str, skip: int = 0, limit: int = 10) -> list[Booking]:
-        """根据状态获取预约"""
         return db.query(Booking).filter(Booking.status == status).offset(skip).limit(limit).all()
 
     @staticmethod
     def get_bookings_by_laboratory(db: Session, laboratory_id: int, skip: int = 0, limit: int = 10) -> list[Booking]:
-        """根据实验室获取预约"""
         return db.query(Booking).filter(Booking.laboratory_id == laboratory_id).offset(skip).limit(limit).all()
 
     @staticmethod
     def update_booking(db: Session, booking_id: int, booking: BookingUpdate) -> Booking:
-        """更新预约"""
         db_booking = BookingService.get_booking_by_id(db, booking_id)
-
-        # 只能修改待审核状态的预约
-        if db_booking.status != "待审核":
-            raise BusinessExceptions("只能修改待审核状态的预约")
+        if db_booking.status != PENDING:
+            raise BusinessExceptions("Only pending bookings can be modified")
 
         update_data = booking.model_dump(exclude_unset=True)
+        next_start = update_data.get("start_time", db_booking.start_time)
+        next_end = update_data.get("end_time", db_booking.end_time)
+        start = BookingService._parse_time(next_start)
+        end = BookingService._parse_time(next_end)
+        if start >= end:
+            raise BusinessExceptions("End time must be later than start time")
+
+        BookingService._ensure_no_conflict(
+            db,
+            db_booking.laboratory_id,
+            start,
+            end,
+            exclude_booking_id=booking_id,
+        )
         for field, value in update_data.items():
             setattr(db_booking, field, value)
 
@@ -105,18 +130,17 @@ class BookingService:
     def approve_booking(
         db: Session, booking_id: int, approve_data: BookingApprove, approved_by: int
     ) -> Booking:
-        """审批预约"""
         db_booking = BookingService.get_booking_by_id(db, booking_id)
-
-        if db_booking.status != "待审核":
-            raise BusinessExceptions("只能审批待审核状态的预约")
+        if db_booking.status != PENDING:
+            raise BusinessExceptions("Only pending bookings can be approved")
+        if approve_data.status not in [APPROVED, REJECTED]:
+            raise BusinessExceptions("Invalid approval status")
 
         db_booking.status = approve_data.status
         db_booking.reject_reason = approve_data.reject_reason
         db_booking.remarks = approve_data.remarks
         db_booking.approved_by = approved_by
         db_booking.approved_time = datetime.now()
-
         db.add(db_booking)
         db.commit()
         db.refresh(db_booking)
@@ -124,21 +148,17 @@ class BookingService:
 
     @staticmethod
     def cancel_booking(db: Session, booking_id: int) -> dict:
-        """取消预约"""
         db_booking = BookingService.get_booking_by_id(db, booking_id)
-
-        if db_booking.status in ["已拒绝", "已取消"]:
-            raise BusinessExceptions("该预约无法取消")
-
-        db_booking.status = "已取消"
+        if db_booking.status in [REJECTED, CANCELLED]:
+            raise BusinessExceptions("This booking cannot be cancelled")
+        db_booking.status = CANCELLED
         db.add(db_booking)
         db.commit()
-        return {"message": "预约已取消"}
+        return {"message": "Booking cancelled"}
 
     @staticmethod
     def delete_booking(db: Session, booking_id: int) -> dict:
-        """删除预约"""
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         db.delete(db_booking)
         db.commit()
-        return {"message": "预约已删除"}
+        return {"message": "Booking deleted"}

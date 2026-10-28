@@ -60,11 +60,24 @@ async def get_equipment_list(
     else:
         equipment_list = EquipmentService.get_all_equipment(db, skip, limit)
 
-    total = EquipmentService.get_equipment_count(db)
+    if keyword:
+        total = len(EquipmentService.search_equipment(db, keyword, 0, 1000000))
+    elif laboratory_id is not None:
+        total = EquipmentService.get_equipment_count_by_laboratory(db, laboratory_id)
+    elif maintenance_status:
+        total = len(
+            EquipmentService.get_equipment_by_maintenance_status(
+                db, maintenance_status, 0, 1000000
+            )
+        )
+    else:
+        total = EquipmentService.get_equipment_count(db)
+
+    items = [EquipmentResponse.model_validate(item) for item in equipment_list]
     return {
         "code": 200,
         "data": {
-            "items": equipment_list,
+            "items": items,
             "total": total,
             "skip": skip,
             "limit": limit,

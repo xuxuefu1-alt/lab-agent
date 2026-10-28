@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies.auth import get_current_user
-from app.schemas.user import UserResponse
+from app.schemas.user import UserResponse, AdminUserCreate, AdminUserUpdate
 from app.schemas.password import ChangePasswordRequest, ChangePasswordResponse
 from app.services.user_services import UserService
 from app.common.respones import success_response
@@ -67,7 +67,7 @@ async def get_user(
 
 @router.post("", response_model=success_response(UserResponse))
 async def create_user(
-    user_data: dict,
+    user_data: AdminUserCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -77,10 +77,12 @@ async def create_user(
 
     user = UserService.create_user(
         db,
-        username=user_data["username"],
-        password=user_data["password"],
-        name=user_data["name"],
-        role=user_data.get("role", "student"),
+        username=user_data.username,
+        password=user_data.password,
+        name=user_data.name,
+        role=user_data.role,
+        email=user_data.email,
+        phone=user_data.phone,
     )
 
     return {
@@ -93,12 +95,12 @@ async def create_user(
 @router.put("/{user_id}", response_model=success_response(UserResponse))
 async def update_user(
     user_id: int,
-    user_data: dict,
+    user_data: AdminUserUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """更新用户信息"""
-    if current_user.role != "admin" and current_user.id != user_id:
+    if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="权限不足")
 
     user = UserService.update_user(db, user_id, user_data)
@@ -144,6 +146,7 @@ async def change_password(
     # 验证密码一致性
     password_data.validate_passwords()
 
+    password_data.validate_passwords()
     result = UserService.change_password(
         db, user_id, password_data.old_password, password_data.new_password
     )

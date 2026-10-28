@@ -172,13 +172,8 @@ def test_booking_management():
     approved_booking = BookingService.approve_booking(db, booking.id, approve_data, 1)
     print(f"   [PASS] Booking approved: Status={approved_booking.status}")
 
-    # Update booking
-    print("\n5. Cancelling booking...")
-    result = BookingService.cancel_booking(db, booking.id)
-    print(f"   [PASS] {result['message']}")
-
-    # Test time conflict detection
-    print("\n6. Testing time conflict detection...")
+    # Test time conflict detection while the original booking is still active
+    print("\n5. Testing time conflict detection...")
     try:
         conflicting_booking = BookingCreate(
             laboratory_id=lab.id,
@@ -191,6 +186,10 @@ def test_booking_management():
         print("   [FAIL] Should have detected conflict!")
     except Exception as e:
         print(f"   [PASS] Correctly detected conflict: {str(e)}")
+
+    print("\n6. Cancelling booking...")
+    result = BookingService.cancel_booking(db, booking.id)
+    print(f"   [PASS] {result['message']}")
 
     print("\n[SUCCESS] Booking management tests passed!")
     db.close()

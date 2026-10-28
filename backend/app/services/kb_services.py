@@ -1,4 +1,5 @@
 import chromadb
+import os
 from app.config import BASE_DIR
 from chromadb.api.models.Collection import Collection
 from chromadb.utils import embedding_functions
@@ -7,11 +8,26 @@ from chromadb.utils import embedding_functions
 
 KB_DIR = BASE_DIR / "data" / "kb"
 CHROMA_DIR = BASE_DIR / "data" / "chroma"
+MODEL_CACHE_DIR = BASE_DIR / "data" / "models"  # 本地模型缓存目录
+
+# 设置 HuggingFace 缓存目录，避免每次都重新下载
+os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
+os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", str(MODEL_CACHE_DIR))
 
 _collection = None
-_embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="BAAI/bge-small-zh-v1.5"
-)
+_embedding_fn = None  # 改为懒加载
+
+
+def _get_embedding_function():
+    """懒加载 embedding 函数，只在需要时才初始化"""
+    global _embedding_fn
+    if _embedding_fn is None:
+        # 创建模型缓存目录
+        MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="BAAI/bge-small-zh-v1.5"
+        )
+    return _embedding_fn
 
 
 def get_collection() -> Collection:
@@ -25,9 +41,9 @@ def get_collection() -> Collection:
 
     # 获取chroma client
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    # 获取到本地所有向量
+    # 获取到本地所有向量（使用懒加载的 embedding 函数）
     col = client.get_or_create_collection(
-        name="lab_agent", embedding_function=_embedding_fn
+        name="lab_agent", embedding_function=_get_embedding_function()
     )
     if col.count() == 0:
         ids = []  # 序列号
