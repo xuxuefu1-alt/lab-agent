@@ -1,9 +1,11 @@
-from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BookingBase(BaseModel):
     laboratory_id: int = Field(..., description="实验室ID")
+    equipment_ids: list[int] = Field(default_factory=list, max_length=20, description="预约设备ID列表")
     start_time: str = Field(..., description="开始时间 (YYYY-MM-DD HH:mm)")
     end_time: str = Field(..., description="结束时间 (YYYY-MM-DD HH:mm)")
     purpose: str = Field(..., min_length=1, max_length=500, description="预约目的")
@@ -16,17 +18,19 @@ class BookingCreate(BookingBase):
 
 
 class BookingApprove(BaseModel):
-    status: str = Field(..., description="审批状态 已批准/已拒绝")
+    status: str = Field(..., description="审批状态")
     reject_reason: str | None = Field(None, max_length=500, description="拒绝原因")
     remarks: str | None = Field(None, max_length=500, description="备注")
 
 
 class BookingUpdate(BaseModel):
-    start_time: str | None = Field(None, description="开始时间")
-    end_time: str | None = Field(None, description="结束时间")
-    purpose: str | None = Field(None, description="预约目的")
+    laboratory_id: int | None = Field(None, description="实验室ID")
+    start_time: str | None = Field(None, description="开始时间 (YYYY-MM-DD HH:mm)")
+    end_time: str | None = Field(None, description="结束时间 (YYYY-MM-DD HH:mm)")
+    purpose: str | None = Field(None, min_length=1, max_length=500, description="预约目的")
     student_count: int | None = Field(None, ge=1, description="学生数量")
-    remarks: str | None = Field(None, description="备注")
+    remarks: str | None = Field(None, max_length=500, description="备注")
+    equipment_ids: list[int] | None = Field(None, max_length=20, description="预约设备ID列表")
 
 
 class BookingResponse(BookingBase):

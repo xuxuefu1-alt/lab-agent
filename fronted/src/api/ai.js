@@ -19,6 +19,7 @@ function unwrapChatResponse(response) {
   return {
     role: response.data.role || 'assistant',
     content: response.data.content,
+    blocks: Array.isArray(response.data.blocks) ? response.data.blocks : [],
   }
 }
 

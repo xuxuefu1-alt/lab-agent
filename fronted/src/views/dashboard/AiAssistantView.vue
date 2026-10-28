@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { chat as chatApi } from '../../api/ai'
 import {
@@ -21,6 +21,17 @@ const draft = ref('')
 const isTyping = ref(false)
 const chatScroll = ref(null)
 const activeConversationId = ref(1)
+const conversationMessages = ref({})
+const stateHydrated = ref(false)
+
+function getChatStorageKey() {
+  try {
+    const user = JSON.parse(localStorage.getItem('laboratory-booking-user') || 'null')
+    return `ai-assistant-chat:${user?.id || user?.username || 'guest'}`
+  } catch {
+    return 'ai-assistant-chat:guest'
+  }
+}
 
 const quickPrompts = [
   {
@@ -48,6 +59,38 @@ const conversations = ref([
 
 const messages = ref([])
 
+function persistChatState() {
+  if (!stateHydrated.value || typeof window === 'undefined') return
+  conversationMessages.value[activeConversationId.value] = messages.value
+  localStorage.setItem(
+    getChatStorageKey(),
+    JSON.stringify({
+      conversations: conversations.value,
+      activeConversationId: activeConversationId.value,
+      conversationMessages: conversationMessages.value,
+    }),
+  )
+}
+
+function restoreChatState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(getChatStorageKey()) || 'null')
+    if (!saved) return
+    if (Array.isArray(saved.conversations) && saved.conversations.length) {
+      conversations.value = saved.conversations
+    }
+    if (saved.conversationMessages && typeof saved.conversationMessages === 'object') {
+      conversationMessages.value = saved.conversationMessages
+    }
+    if (saved.activeConversationId !== undefined) {
+      activeConversationId.value = saved.activeConversationId
+      messages.value = conversationMessages.value[saved.activeConversationId] || []
+    }
+  } catch {
+    localStorage.removeItem(getChatStorageKey())
+  }
+}
+
 const isEmptyConversation = computed(
   () => messages.value.length === 0 && !isTyping.value,
 )
@@ -58,6 +101,7 @@ function selectPrompt(text) {
 }
 
 function startNewConversation() {
+  conversationMessages.value[activeConversationId.value] = messages.value
   activeConversationId.value = Date.now()
   conversations.value.unshift({
     id: activeConversationId.value,
@@ -67,10 +111,17 @@ function startNewConversation() {
   })
   messages.value = []
   draft.value = ''
+  persistChatState()
 }
 
 function selectConversation(conversation) {
+  conversationMessages.value[activeConversationId.value] = messages.value
   activeConversationId.value = conversation.id
+  if (conversationMessages.value[conversation.id]) {
+    messages.value = conversationMessages.value[conversation.id]
+    persistChatState()
+    return
+  }
   if (conversation.id === 1) {
     messages.value = []
     return
@@ -86,6 +137,7 @@ function selectConversation(conversation) {
       time: '昨天',
     },
   ]
+  persistChatState()
 }
 
 async function sendMessage() {
@@ -96,6 +148,7 @@ async function sendMessage() {
     id: Date.now(),
     role: 'user',
     content,
+    blocks: [],
     time: '刚刚',
   })
   draft.value = ''
@@ -119,6 +172,7 @@ async function sendMessage() {
       id: Date.now(),
       role: 'assistant',
       content: response.content,
+      blocks: response.blocks || [],
       time: '刚刚',
     })
   } catch (error) {
@@ -153,8 +207,21 @@ async function copyMessage(content) {
 
 function clearConversation() {
   messages.value = []
+  conversationMessages.value[activeConversationId.value] = []
+  persistChatState()
   ElMessage.success('已清空当前对话')
 }
+watch(
+  [messages, conversations, activeConversationId],
+  persistChatState,
+  { deep: true },
+)
+
+onMounted(() => {
+  restoreChatState()
+  stateHydrated.value = true
+  nextTick(scrollToBottom)
+})
 </script>
 
 <template>
@@ -282,6 +349,108 @@ function clearConversation() {
               <div class="assistant-bubble">
                 <p>{{ message.content }}</p>
               </div>
+              <div
+                v-for="(block, blockIndex) in message.blocks || []"
+                :key="`${message.id}-block-${blockIndex}`"
+                class="assistant-data-card"
+              >
+                <div class="assistant-data-card-header">
+                  <strong>{{ block.title }}</strong>
+                  <span>{{ block.count ?? block.items?.length ?? 0 }} 项</span>
+                </div>
+
+                <div v-if="block.type === 'laboratory_list'" class="assistant-data-list">
+                  <div v-for="item in block.items || []" :key="item.id" class="assistant-data-row">
+                    <div class="assistant-data-main">
+                      <strong>{{ item.name }}</strong>
+                      <span>{{ item.location || '位置未填写' }}</span>
+                    </div>
+                    <div class="assistant-data-meta">
+                      <span>容纳 {{ item.capacity ?? '-' }} 人</span>
+                      <span class="assistant-data-status">可用</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else-if="block.type === 'equipment_list'" class="assistant-data-list">
+                  <div v-for="item in block.items || []" :key="item.id" class="assistant-data-row">
+                    <div class="assistant-data-main">
+                      <strong>{{ item.name }}</strong>
+                      <span>{{ item.equipment_type || '设备' }} · {{ item.model || '型号未填写' }}</span>
+                    </div>
+                    <div class="assistant-data-meta">
+                      <span>{{ item.maintenance_status || '状态未知' }}</span>
+                      <span class="assistant-data-status">{{ item.status === 1 ? '可用' : '停用' }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else-if="block.type === 'laboratory_equipment_list'" class="assistant-grouped-resource-list">
+                  <section
+                    v-for="group in block.items || []"
+                    :key="group.laboratory?.id"
+                    class="assistant-resource-group"
+                  >
+                    <div class="assistant-resource-group-head">
+                      <div class="assistant-data-main">
+                        <strong>{{ group.laboratory?.name }}</strong>
+                        <span>{{ group.laboratory?.location || '位置未填写' }} · 容纳 {{ group.laboratory?.capacity ?? '-' }} 人</span>
+                      </div>
+                      <span class="assistant-data-status">可预约实验室</span>
+                    </div>
+                    <div v-if="group.equipment?.length" class="assistant-resource-equipment-list">
+                      <div v-for="item in group.equipment" :key="item.id" class="assistant-resource-equipment-item">
+                        <div class="assistant-data-main">
+                          <strong>{{ item.name }}</strong>
+                          <span>{{ item.equipment_type || '设备' }} · {{ item.model || '型号未填写' }}</span>
+                        </div>
+                        <span class="assistant-data-status">可预约设备</span>
+                      </div>
+                    </div>
+                    <div v-else class="assistant-resource-empty">该实验室当前没有可预约设备</div>
+                  </section>
+                </div>
+
+                <div v-else-if="block.type === 'user_profile'" class="assistant-data-list">
+                  <div v-for="item in block.items || []" :key="item.id" class="assistant-data-row">
+                    <div class="assistant-data-main">
+                      <strong>{{ item.name || item.username }}</strong>
+                      <span>@{{ item.username }} · {{ item.role === 'admin' ? '管理员' : '学生' }}</span>
+                    </div>
+                    <div class="assistant-data-meta">
+                      <span>{{ item.email || '未填写邮箱' }}</span>
+                      <span class="assistant-data-status">{{ item.status === 1 ? '正常' : '停用' }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else-if="block.type === 'user_list'" class="assistant-data-list">
+                  <div v-for="item in block.items || []" :key="item.id" class="assistant-data-row">
+                    <div class="assistant-data-main">
+                      <strong>{{ item.name || item.username }}</strong>
+                      <span>@{{ item.username }} · {{ item.email || '未填写邮箱' }}</span>
+                    </div>
+                    <div class="assistant-data-meta">
+                      <span>{{ item.role === 'admin' ? '管理员' : '学生' }}</span>
+                      <span class="assistant-data-status">{{ item.status === 1 ? '正常' : '停用' }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else-if="block.type === 'booking_list'" class="assistant-data-list">
+                  <div v-for="item in block.items || []" :key="item.id" class="assistant-data-row">
+                    <div class="assistant-data-main">
+                      <strong>{{ item.laboratory_name || `实验室#${item.laboratory_id}` }}</strong>
+                      <span>{{ item.start_time }} - {{ item.end_time }}</span>
+                      <span>{{ item.purpose }}</span>
+                    </div>
+                    <div class="assistant-data-meta">
+                      <span>{{ item.equipment?.length || 0 }} 件设备</span>
+                      <span class="assistant-data-status">{{ item.status }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div v-if="message.role === 'assistant'" class="assistant-message-tools">
                 <el-tooltip content="复制回复" placement="bottom">
                   <button
@@ -391,3 +560,135 @@ function clearConversation() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.assistant-data-card {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid #e3e8ef;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(27, 39, 58, 0.06);
+}
+
+.assistant-data-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #edf0f4;
+  color: #1f2937;
+}
+
+.assistant-data-card-header span {
+  color: #7b8794;
+  font-size: 12px;
+}
+
+.assistant-data-list {
+  display: grid;
+}
+
+.assistant-data-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 14px;
+}
+
+.assistant-data-row + .assistant-data-row {
+  border-top: 1px solid #f0f2f5;
+}
+
+.assistant-data-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.assistant-data-main strong {
+  overflow: hidden;
+  color: #263241;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-data-main span,
+.assistant-data-meta span {
+  color: #7b8794;
+  font-size: 12px;
+}
+
+.assistant-data-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.assistant-data-status {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #edf8f1;
+  color: #21844d !important;
+  font-weight: 600;
+}
+
+.assistant-grouped-resource-list {
+  display: grid;
+}
+
+.assistant-resource-group {
+  padding: 14px;
+}
+
+.assistant-resource-group + .assistant-resource-group {
+  border-top: 1px solid #edf0f4;
+}
+
+.assistant-resource-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.assistant-resource-equipment-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-left: 14px;
+  border-left: 2px solid #e8edf4;
+}
+
+.assistant-resource-equipment-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+
+.assistant-resource-empty {
+  margin-top: 10px;
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .assistant-data-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .assistant-data-meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+</style>
