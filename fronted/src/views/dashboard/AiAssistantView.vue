@@ -1,7 +1,11 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { chat as chatApi } from '../../api/ai'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  chat as chatApi,
+  deleteConversation as deleteConversationApi,
+  resetConversation as resetConversationApi,
+} from '../../api/ai'
 import {
   ArrowRight,
   ChatDotRound,
@@ -20,7 +24,7 @@ import {
 const draft = ref('')
 const isTyping = ref(false)
 const chatScroll = ref(null)
-const activeConversationId = ref(1)
+const activeConversationId = ref(null)
 const pendingConfirmationToken = ref(null)
 const conversationMessages = ref({})
 const stateHydrated = ref(false)
@@ -32,6 +36,10 @@ function getChatStorageKey() {
   } catch {
     return 'ai-assistant-chat:guest'
   }
+}
+
+function isDemoConversationId(id) {
+  return ['1', '2', '3'].includes(String(id))
 }
 
 const quickPrompts = [
@@ -52,11 +60,7 @@ const quickPrompts = [
   },
 ]
 
-const conversations = ref([
-  { id: 1, title: '本周实验室预约建议', time: '刚刚', unread: false },
-  { id: 2, title: '查看设备使用情况', time: '昨天', unread: false },
-  { id: 3, title: '新用户入驻流程咨询', time: '周一', unread: false },
-])
+const conversations = ref([])
 
 const messages = ref([])
 
@@ -78,17 +82,24 @@ function restoreChatState() {
   try {
     const saved = JSON.parse(localStorage.getItem(getChatStorageKey()) || 'null')
     if (!saved) return
-    if (Array.isArray(saved.conversations) && saved.conversations.length) {
-      conversations.value = saved.conversations
+    if (Array.isArray(saved.conversations)) {
+      const validConversations = saved.conversations.filter(
+        (conversation) => conversation?.id && !isDemoConversationId(conversation.id),
+      )
+      conversations.value = validConversations
     }
     if (saved.conversationMessages && typeof saved.conversationMessages === 'object') {
-      conversationMessages.value = saved.conversationMessages
+      conversationMessages.value = Object.fromEntries(
+        Object.entries(saved.conversationMessages).filter(([id]) => !isDemoConversationId(id)),
+      )
     }
-    if (saved.activeConversationId !== undefined) {
+    if (saved.activeConversationId !== undefined && !isDemoConversationId(saved.activeConversationId)) {
       activeConversationId.value = saved.activeConversationId
       messages.value = conversationMessages.value[saved.activeConversationId] || []
     }
-    pendingConfirmationToken.value = saved.pendingConfirmationToken || null
+    pendingConfirmationToken.value = isDemoConversationId(saved.activeConversationId)
+      ? null
+      : saved.pendingConfirmationToken || null
   } catch {
     localStorage.removeItem(getChatStorageKey())
   }
@@ -103,9 +114,19 @@ function selectPrompt(text) {
   nextTick(() => document.querySelector('.assistant-input')?.focus())
 }
 
-function startNewConversation() {
-  conversationMessages.value[activeConversationId.value] = messages.value
-  activeConversationId.value = Date.now()
+async function startNewConversation() {
+  if (isTyping.value) return
+  const previousId = activeConversationId.value
+  try {
+    const reset = await resetConversationApi(previousId)
+    delete conversationMessages.value[previousId]
+    activeConversationId.value = reset.conversation_id
+    messages.value = []
+  } catch (error) {
+    ElMessage.error(error?.message || '无法创建新会话')
+    return
+  }
+  conversationMessages.value[activeConversationId.value] = []
   conversations.value.unshift({
     id: activeConversationId.value,
     title: '新对话',
@@ -127,22 +148,48 @@ function selectConversation(conversation) {
     persistChatState()
     return
   }
-  if (conversation.id === 1) {
-    messages.value = []
+  // Do not inject placeholder messages into a real conversation.
+  messages.value = []
+  persistChatState()
+}
+
+async function deleteConversation(conversation) {
+  if (isTyping.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除“${conversation.title || '未命名会话'}”吗？删除后将不再显示该会话。`,
+      '删除会话',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error?.message || '删除会话失败')
     return
   }
-  messages.value = [
-    {
-      id: `${conversation.id}-assistant`,
-      role: 'assistant',
-      content:
-        conversation.id === 2
-          ? '可以。我可以从设备状态、使用频次和预约时间三个维度，帮你快速整理设备使用情况。'
-          : '新用户入驻通常需要完成账号注册、角色确认和实验室安全须知阅读。你希望查看完整流程还是某一个步骤？',
-      time: '昨天',
-    },
-  ]
-  persistChatState()
+
+  try {
+    await deleteConversationApi(conversation.id)
+    delete conversationMessages.value[conversation.id]
+    conversations.value = conversations.value.filter((item) => item.id !== conversation.id)
+
+    if (activeConversationId.value === conversation.id) {
+      const nextConversation = conversations.value[0]
+      if (nextConversation) {
+        selectConversation(nextConversation)
+      } else {
+        activeConversationId.value = null
+        messages.value = []
+        pendingConfirmationToken.value = null
+      }
+    }
+    persistChatState()
+    ElMessage.success('会话已删除')
+  } catch (error) {
+    ElMessage.error(error?.message || '删除会话失败')
+  }
 }
 
 async function sendMessage() {
@@ -176,6 +223,17 @@ async function sendMessage() {
       pendingConfirmationToken.value,
       activeConversationId.value,
     )
+
+    if (response.conversationId && response.conversationId !== activeConversationId.value) {
+      activeConversationId.value = response.conversationId
+      conversationMessages.value[activeConversationId.value] = messages.value
+      conversations.value.unshift({
+        id: activeConversationId.value,
+        title: currentConversation?.title || content.slice(0, 16),
+        time: '刚刚',
+        unread: false,
+      })
+    }
 
     pendingConfirmationToken.value = response.confirmationToken || null
 
@@ -242,12 +300,26 @@ async function copyMessage(content) {
   }
 }
 
-function clearConversation() {
-  messages.value = []
-  pendingConfirmationToken.value = null
-  conversationMessages.value[activeConversationId.value] = []
-  persistChatState()
-  ElMessage.success('已清空当前对话')
+async function clearConversation() {
+  if (isTyping.value) return
+  const previousId = activeConversationId.value
+  try {
+    const reset = await resetConversationApi(previousId)
+    delete conversationMessages.value[previousId]
+    activeConversationId.value = reset.conversation_id
+    messages.value = []
+    pendingConfirmationToken.value = null
+    conversations.value.unshift({
+      id: activeConversationId.value,
+      title: '新对话',
+      time: '刚刚',
+      unread: false,
+    })
+    persistChatState()
+    ElMessage.success('已清空当前对话')
+  } catch (error) {
+    ElMessage.error(error?.message || '无法清空当前会话')
+  }
 }
 watch(
   [messages, conversations, activeConversationId],
@@ -288,13 +360,16 @@ onMounted(() => {
         </div>
 
         <nav class="assistant-history-list" aria-label="最近对话">
-          <button
+          <div
             v-for="conversation in conversations"
             :key="conversation.id"
             class="assistant-history-item"
             :class="{ active: conversation.id === activeConversationId }"
-            type="button"
+            role="button"
+            tabindex="0"
             @click="selectConversation(conversation)"
+            @keydown.enter="selectConversation(conversation)"
+            @keydown.space.prevent="selectConversation(conversation)"
           >
             <span class="assistant-history-icon">
               <el-icon :size="16"><ChatDotRound /></el-icon>
@@ -304,7 +379,17 @@ onMounted(() => {
               <small>{{ conversation.time }}</small>
             </span>
             <span v-if="conversation.unread" class="assistant-unread"></span>
-          </button>
+            <el-tooltip content="删除会话" placement="top">
+              <button
+                class="assistant-history-delete"
+                type="button"
+                aria-label="删除会话"
+                @click.stop="deleteConversation(conversation)"
+              >
+                <el-icon :size="14"><Delete /></el-icon>
+              </button>
+            </el-tooltip>
+          </div>
         </nav>
 
       </aside>

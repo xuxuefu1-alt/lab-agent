@@ -10,6 +10,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from app.common.exceptions import BusinessExceptions
 from app.model.equipment import Equipment
 from app.model.laboratory import Laboratory
 from app.model.user import User
@@ -319,6 +320,16 @@ def _tool_failure(db: Session, exc: Exception) -> str:
         db.rollback()
     except Exception:
         logger.exception("Failed to rollback AI tool transaction")
+    if isinstance(exc, BusinessExceptions):
+        return json.dumps(
+            {
+                "ok": False,
+                "error": str(exc),
+                "retryable": False,
+                "error_type": "business_rule",
+            },
+            ensure_ascii=False,
+        )
     logger.exception("AI tool database operation failed")
     return json.dumps(
         {"ok": False, "error": "数据查询暂时失败，请稍后重试。", "retryable": True},
@@ -334,7 +345,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
 
     def list_open_laboratories(keyword: str | None = None, limit: int = 20) -> str:
         if not account_is_enabled():
-            return json.dumps({"ok": False, "error": "Current account is disabled."})
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         try:
             return json.dumps({"ok": True, "data": _list_open_laboratories(db, keyword, limit)}, ensure_ascii=False)
         except Exception as exc:
@@ -346,7 +357,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         limit: int = 20,
     ) -> str:
         if not account_is_enabled():
-            return json.dumps({"ok": False, "error": "Current account is disabled."})
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         try:
             return json.dumps(
                 {"ok": True, "data": _list_laboratory_equipment(db, laboratory_id, keyword, limit)},
@@ -357,7 +368,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
 
     def list_open_laboratories_with_equipment(keyword: str | None = None, limit: int = 20) -> str:
         if not account_is_enabled():
-            return json.dumps({"ok": False, "error": "Current account is disabled."})
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         try:
             return json.dumps(
                 {"ok": True, "data": _list_open_laboratories_with_equipment(db, keyword, limit)},
@@ -368,7 +379,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
 
     def get_current_user_profile() -> str:
         if not account_is_enabled():
-            return json.dumps({"ok": False, "error": "Current account is disabled."})
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         return json.dumps(
             {"ok": True, "data": {"access": _permission_summary(current_user)}},
             ensure_ascii=False,
@@ -376,13 +387,13 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
 
     def get_user_profile(user_id: int) -> str:
         if not account_is_enabled():
-            return json.dumps({"ok": False, "error": "Current account is disabled."})
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         if current_user.role != "admin" and user_id != current_user.id:
-            return json.dumps({"ok": False, "error": "You can only access your own profile."}, ensure_ascii=False)
+            return json.dumps({"ok": False, "error": "你只能查看自己的账户权限摘要。"}, ensure_ascii=False)
         try:
             user = db.query(User).filter(User.id == user_id).first()
             if user is None:
-                return json.dumps({"ok": False, "error": "User not found."}, ensure_ascii=False)
+                return json.dumps({"ok": False, "error": "未找到对应用户。"}, ensure_ascii=False)
             return json.dumps(
                 {"ok": True, "data": {"access": _permission_summary(user)}},
                 ensure_ascii=False,
@@ -398,9 +409,9 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         limit: int = 20,
     ) -> str:
         if not account_is_enabled():
-            return json.dumps({"ok": False, "error": "Current account is disabled."})
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         if current_user.role != "admin":
-            return json.dumps({"ok": False, "error": "Only administrators can list users."}, ensure_ascii=False)
+            return json.dumps({"ok": False, "error": "只有管理员可以查询用户列表。"}, ensure_ascii=False)
         try:
             return json.dumps(
                 {"ok": True, "data": _list_users(db, keyword, role, status, skip, limit)},
@@ -411,7 +422,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
 
     def list_my_bookings(status: str | None = None, limit: int = 20) -> str:
         if not account_is_enabled():
-            return json.dumps({"ok": False, "error": "Current account is disabled."})
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         try:
             return json.dumps(
                 {"ok": True, "data": _list_my_bookings(db, current_user.id, status, limit)},
@@ -430,7 +441,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         remarks: str | None = None,
     ) -> str:
         if not account_is_enabled():
-            return json.dumps({"ok": False, "error": "Current account is disabled."})
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         try:
             request = BookingCreate(
                 laboratory_id=laboratory_id,
@@ -444,7 +455,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
             start = BookingService._parse_time(request.start_time)
             end = BookingService._parse_time(request.end_time)
             if start >= end:
-                return json.dumps({"ok": False, "error": "End time must be later than start time"})
+                return json.dumps({"ok": False, "error": "结束时间必须晚于开始时间。"}, ensure_ascii=False)
             normalized_ids = BookingService._validate_resources(db, request.laboratory_id, request.equipment_ids)
             BookingService._ensure_no_conflict(db, request.laboratory_id, normalized_ids, start, end)
             laboratory = db.query(Laboratory).filter(Laboratory.id == request.laboratory_id).first()

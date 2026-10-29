@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.model.equipment import Equipment
 from app.model.laboratory import Laboratory
 
 
@@ -39,6 +40,7 @@ WEEKDAY_WORDS = {
     "\u5929": 6,
 }
 LOCAL_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
+NORMAL_EQUIPMENT_STATUSES = {"正常", "Normal", "姝ｅ父"}
 
 
 def is_create_booking_intent(text: str) -> bool:
@@ -223,6 +225,68 @@ def _resolve_laboratory(
     return None, False, []
 
 
+def _equipment_stem(value: str) -> str:
+    normalized = _normalize_phrase(value)
+    for suffix in ("设备", "仪器"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
+def _equipment_query_score(text: str, equipment: Equipment) -> int:
+    query = _normalize_phrase(text)
+    name = _normalize_phrase(equipment.name or "")
+    equipment_type = _normalize_phrase(equipment.equipment_type or "")
+    model = _normalize_phrase(equipment.model or "")
+    name_stem = _equipment_stem(name)
+    if not name:
+        return 0
+    if name in query:
+        return 100
+    if name_stem and len(name_stem) >= 2 and name_stem in query:
+        return 95
+    if equipment_type and len(equipment_type) >= 2 and equipment_type in query:
+        return 90
+    if model and len(model) >= 2 and model in query:
+        return 85
+    similarity = SequenceMatcher(None, name, query).ratio()
+    if similarity >= 0.72:
+        return int(similarity * 70)
+    return 0
+
+
+def _resolve_equipment(
+    db: Session,
+    text: str,
+    laboratory_id: int,
+) -> tuple[Equipment | None, bool, list[str]]:
+    equipment_rows = (
+        db.query(Equipment)
+        .filter(
+            Equipment.laboratory_id == laboratory_id,
+            Equipment.status == 1,
+            Equipment.maintenance_status.in_(NORMAL_EQUIPMENT_STATUSES),
+        )
+        .order_by(Equipment.id)
+        .all()
+    )
+    scored = [
+        (item, _equipment_query_score(text, item))
+        for item in equipment_rows
+    ]
+    scored = [(item, score) for item, score in scored if score > 0]
+    scored.sort(key=lambda pair: (-pair[1], pair[0].id))
+    if not scored:
+        return None, False, []
+    best_item, best_score = scored[0]
+    second_score = scored[1][1] if len(scored) > 1 else 0
+    if len(scored) > 1 and second_score >= best_score - 8:
+        return None, True, [item.name for item, _ in scored[:5]]
+    if best_score >= 75:
+        return best_item, False, []
+    return None, False, []
+
+
 def resolve_booking_request(
     db: Session,
     text: str,
@@ -275,6 +339,38 @@ def resolve_booking_request(
             "ready": False,
             "message": "没有识别到对应的开放实验室，请提供实验室名称或所在位置。",
             "reason": "missing_laboratory",
+            "draft": draft,
+        }
+
+    equipment, equipment_ambiguous, equipment_candidates = _resolve_equipment(
+        db,
+        text,
+        draft["laboratory_id"],
+    )
+    if equipment_ambiguous:
+        candidate_text = "、".join(equipment_candidates[:5])
+        return {
+            "handled": True,
+            "ready": False,
+            "message": f"请明确要预约哪一件设备，可选：{candidate_text}。",
+            "reason": "ambiguous_equipment",
+            "draft": draft,
+        }
+    if equipment is not None:
+        draft.update(
+            {
+                "equipment_ids": [equipment.id],
+                "equipment": [{"id": equipment.id, "name": equipment.name}],
+            }
+        )
+    elif not draft.get("equipment_ids") and any(
+        word in text for word in ("设备", "仪器", "显微镜")
+    ):
+        return {
+            "handled": True,
+            "ready": False,
+            "message": "没有找到该实验室下可预约的对应设备，请提供设备名称。",
+            "reason": "equipment_not_found",
             "draft": draft,
         }
 
@@ -346,7 +442,7 @@ def resolve_booking_request(
         "end_time": end.strftime("%Y-%m-%d %H:%M"),
         "purpose": "实验室/设备预约",
         "student_count": 1,
-        "equipment_ids": [],
+        "equipment_ids": draft.get("equipment_ids", []),
         "draft": {
             **draft,
             "laboratory_id": draft.get("laboratory_id"),

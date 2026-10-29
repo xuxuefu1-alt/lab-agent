@@ -1,7 +1,5 @@
 import { ApiError, request } from './client'
 
-const useMock = import.meta.env.VITE_USE_MOCK === 'true'
-
 function unwrapResponse(response) {
   if (!response || response.code !== 200 || response.data == null) {
     throw new ApiError(
@@ -21,34 +19,7 @@ function normalizeUser(user) {
   }
 }
 
-function mockLogin(credentials) {
-  return new Promise((resolve) => {
-    window.setTimeout(() => {
-      resolve({
-        token: `mock-token-${Date.now()}`,
-        user: normalizeUser({
-          id: 1,
-          username: credentials.username,
-          name: '管理员',
-          role: 'admin',
-          status: 1,
-        }),
-      })
-    }, 450)
-  })
-}
-
-function mockRegister() {
-  return new Promise((resolve) => {
-    window.setTimeout(() => resolve({}), 450)
-  })
-}
-
 export async function login(credentials) {
-  if (useMock) {
-    return mockLogin(credentials)
-  }
-
   const response = await request('/auth/login', {
     method: 'POST',
     body: JSON.stringify(credentials),
@@ -66,10 +37,6 @@ export async function login(credentials) {
 }
 
 export async function register(profile) {
-  if (useMock) {
-    return mockRegister()
-  }
-
   const response = await request('/auth/register', {
     method: 'POST',
     body: JSON.stringify(profile),

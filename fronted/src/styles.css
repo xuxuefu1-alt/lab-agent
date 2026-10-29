@@ -863,6 +863,32 @@ button {
   font-size: 11px;
 }
 
+.assistant-history-delete {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  color: #9aa8af;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
+}
+
+.assistant-history-item:hover .assistant-history-delete,
+.assistant-history-item:focus-within .assistant-history-delete {
+  opacity: 1;
+}
+
+.assistant-history-delete:hover {
+  color: #c45656;
+  background: #fceeee;
+}
+
 .assistant-unread {
   width: 5px;
   height: 5px;

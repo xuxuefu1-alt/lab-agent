@@ -1,7 +1,5 @@
 import { ApiError, request } from './client'
 
-const useMock = import.meta.env.VITE_USE_MOCK === 'true'
-
 function unwrapChatResponse(response) {
   if (
     !response ||
@@ -25,19 +23,6 @@ function unwrapChatResponse(response) {
   }
 }
 
-function mockChat(messages) {
-  const latestMessage = messages[messages.length - 1]
-
-  return new Promise((resolve) => {
-    window.setTimeout(() => {
-      resolve({
-        role: 'assistant',
-        content: `已收到你的问题：“${latestMessage?.content || ''}”。当前使用本地模拟响应。`,
-      })
-    }, 450)
-  })
-}
-
 export async function chat(messages, confirmationToken = null, conversationId = null) {
   if (!Array.isArray(messages) || messages.length === 0) {
     throw new ApiError('对话内容不能为空')
@@ -56,10 +41,6 @@ export async function chat(messages, confirmationToken = null, conversationId = 
 
   const latestMessage = payload[payload.length - 1]
 
-  if (useMock) {
-    return mockChat([latestMessage])
-  }
-
   const response = await request('/ai/chat', {
     method: 'POST',
     body: JSON.stringify({
@@ -70,4 +51,29 @@ export async function chat(messages, confirmationToken = null, conversationId = 
   })
 
   return unwrapChatResponse(response)
+}
+
+export async function resetConversation(conversationId) {
+  const response = await request(
+    `/ai/conversations/${encodeURIComponent(String(conversationId || 'default'))}/reset`,
+    { method: 'POST' },
+  )
+  if (response?.code !== 200 || !response?.data?.conversation_id) {
+    throw new ApiError(response?.message || '无法重置当前会话', response?.code, response)
+  }
+  return response.data
+}
+
+export async function deleteConversation(conversationId) {
+  if (!conversationId) {
+    throw new ApiError('会话编号不能为空')
+  }
+  const response = await request(
+    `/ai/conversations/${encodeURIComponent(String(conversationId))}`,
+    { method: 'DELETE' },
+  )
+  if (response?.code !== 200) {
+    throw new ApiError(response?.message || '无法删除当前会话', response?.code, response)
+  }
+  return response.data
 }

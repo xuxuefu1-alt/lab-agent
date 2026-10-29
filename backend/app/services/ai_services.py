@@ -2,6 +2,8 @@ import hashlib
 import json
 import logging
 import re
+from datetime import datetime
+from uuid import uuid4
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -13,6 +15,8 @@ from sqlalchemy.orm import Session
 from app.common.exceptions import BusinessExceptions
 from app.config import settings
 from app.model.user import User
+from app.model.ai_conversation import AiConversation
+from app.model.ai_workflow_state import AiWorkflowState
 from app.schemas.ai import ChatRequest
 from app.schemas.booking import BookingCreate
 from app.services import ai_memory_service, kb_services
@@ -33,6 +37,85 @@ MAX_TOOL_ROUNDS = 4
 
 def _confirmation_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def reset_conversation(client_key: str | None, db: Session, current_user: User) -> dict[str, Any]:
+    old_key = (client_key or "default")[:100]
+    conversation = (
+        db.query(AiConversation)
+        .filter(
+            AiConversation.user_id == current_user.id,
+            AiConversation.client_key == old_key,
+        )
+        .first()
+    )
+    if conversation is not None:
+        conversation.status = "archived"
+        db.add(conversation)
+        db.query(AiWorkflowState).filter(
+            AiWorkflowState.conversation_id == conversation.id,
+            AiWorkflowState.user_id == current_user.id,
+        ).update({AiWorkflowState.status: "reset", AiWorkflowState.consumed_at: datetime.now()})
+        ai_memory_service.save_audit(
+            db,
+            current_user,
+            conversation.id,
+            "conversation_reset",
+            "success",
+            result={"client_key": old_key},
+        )
+        db.commit()
+
+    checkpointer = get_checkpointer()
+    clear_thread(checkpointer, thread_id(current_user.id, old_key, "chat"))
+    clear_thread(checkpointer, thread_id(current_user.id, old_key, "booking"))
+
+    new_key = uuid4().hex
+    new_conversation = ai_memory_service.get_or_create_conversation(
+        db, current_user, new_key
+    )
+    return {
+        "conversation_id": new_conversation.client_key,
+        "previous_conversation_id": old_key,
+    }
+
+
+def delete_conversation(client_key: str, db: Session, current_user: User) -> dict[str, Any]:
+    conversation_key = (client_key or "").strip()[:100]
+    if not conversation_key:
+        raise BusinessExceptions(message="会话编号不能为空。")
+
+    conversation = (
+        db.query(AiConversation)
+        .filter(
+            AiConversation.user_id == current_user.id,
+            AiConversation.client_key == conversation_key,
+        )
+        .first()
+    )
+    if conversation is None:
+        raise BusinessExceptions(message="会话不存在或已删除。")
+
+    conversation.status = "archived"
+    db.add(conversation)
+    db.query(AiWorkflowState).filter(
+        AiWorkflowState.conversation_id == conversation.id,
+        AiWorkflowState.user_id == current_user.id,
+    ).update({AiWorkflowState.status: "deleted", AiWorkflowState.consumed_at: datetime.now()})
+    ai_memory_service.save_audit(
+        db,
+        current_user,
+        conversation.id,
+        "conversation_delete",
+        "success",
+        result={"client_key": conversation_key},
+    )
+    db.commit()
+
+    checkpointer = get_checkpointer()
+    clear_thread(checkpointer, thread_id(current_user.id, conversation_key, "chat"))
+    clear_thread(checkpointer, thread_id(current_user.id, conversation_key, "booking"))
+    return {"conversation_id": conversation_key}
 
 SYSTEM_PROMPT = """
 你是实验室管理系统的 AI 智能助手。
@@ -713,7 +796,7 @@ def _checkpoint_message_count(graph: Any, config: dict[str, Any]) -> int:
 
 def chat_llm(data: ChatRequest, db: Session, current_user: User) -> dict[str, Any]:
     if not settings.LLM_API_KEY:
-        raise BusinessExceptions(message="LLM API key is not configured")
+        raise BusinessExceptions(message="AI 服务尚未配置模型密钥，请联系管理员。")
 
     conversation = ai_memory_service.get_or_create_conversation(
         db, current_user, data.conversation_id
@@ -893,7 +976,7 @@ def chat_llm(data: ChatRequest, db: Session, current_user: User) -> dict[str, An
     except Exception as exc:
         db.rollback()
         logger.exception("AI graph failed", extra={"user_id": current_user.id})
-        raise BusinessExceptions(message="AI service is temporarily unavailable") from exc
+        raise BusinessExceptions(message="AI 服务暂时不可用，请稍后重试。") from exc
 
 
 def _tool_message_ok(message: ToolMessage) -> bool:

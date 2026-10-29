@@ -26,3 +26,23 @@ def chat(
         conversation_id=result.get("conversation_id"),
     )
     return Respones.success(data=payload.model_dump())
+
+
+@router.post("/conversations/{conversation_id}/reset")
+def reset_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = ai_services.reset_conversation(conversation_id, db, current_user)
+    return Respones.success(data=result)
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = ai_services.delete_conversation(conversation_id, db, current_user)
+    return Respones.success(data=result)

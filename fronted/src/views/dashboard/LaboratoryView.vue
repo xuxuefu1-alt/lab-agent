@@ -30,7 +30,7 @@ const formData = reactive({
   description: '',
   location: '',
   capacity: 0,
-  manager_id: 1,
+  manager_id: null,
   status: 1,
 })
 
@@ -125,7 +125,7 @@ function resetForm() {
   formData.description = ''
   formData.location = ''
   formData.capacity = 0
-  formData.manager_id = 1
+  formData.manager_id = null
   formData.status = 1
 }
 

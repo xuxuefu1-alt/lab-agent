@@ -23,7 +23,7 @@ class BookingService:
         try:
             return datetime.strptime(value, "%Y-%m-%d %H:%M")
         except (TypeError, ValueError) as exc:
-            raise BusinessExceptions("Invalid time format; expected YYYY-MM-DD HH:mm") from exc
+            raise BusinessExceptions("时间格式不正确，请使用 YYYY-MM-DD HH:mm 格式。") from exc
 
     @staticmethod
     def _validate_resources(db: Session, laboratory_id: int, equipment_ids: list[int]) -> list[int]:
@@ -32,27 +32,27 @@ class BookingService:
             Laboratory.status == 1,
         ).first()
         if laboratory is None:
-            raise BusinessExceptions("Selected laboratory is not available")
+            raise BusinessExceptions("所选实验室当前不可预约。")
 
         normalized_ids = list(dict.fromkeys(equipment_ids or []))
         if len(normalized_ids) > 20:
-            raise BusinessExceptions("At most 20 equipment items can be selected")
+            raise BusinessExceptions("最多只能选择 20 件设备。")
         if not normalized_ids:
             return []
 
         equipment_rows = db.query(Equipment).filter(Equipment.id.in_(normalized_ids)).all()
         by_id = {row.id: row for row in equipment_rows}
         if any(item_id not in by_id for item_id in normalized_ids):
-            raise BusinessExceptions("Selected equipment does not exist")
+            raise BusinessExceptions("所选设备不存在。")
 
         for item_id in normalized_ids:
             equipment = by_id[item_id]
             if equipment.laboratory_id != laboratory_id:
-                raise BusinessExceptions("Equipment must belong to the selected laboratory")
+                raise BusinessExceptions("所选设备不属于当前实验室。")
             if equipment.status != 1:
-                raise BusinessExceptions("Selected equipment is disabled")
+                raise BusinessExceptions("所选设备已停用。")
             if equipment.maintenance_status not in NORMAL_MAINTENANCE_STATUSES:
-                raise BusinessExceptions("Selected equipment is not available for reservation")
+                raise BusinessExceptions("所选设备当前不可预约，可能处于维护状态。")
         return normalized_ids
 
     @staticmethod
@@ -74,7 +74,7 @@ class BookingService:
             existing_start = BookingService._parse_time(existing.start_time)
             existing_end = BookingService._parse_time(existing.end_time)
             if existing_start < end and existing_end > start:
-                raise BusinessExceptions("The selected laboratory time slot is already booked")
+                raise BusinessExceptions("所选实验室在该时间段已被预约，请更换时间。")
 
         if not equipment_ids:
             return
@@ -92,7 +92,7 @@ class BookingService:
             existing_start = BookingService._parse_time(existing.start_time)
             existing_end = BookingService._parse_time(existing.end_time)
             if existing_start < end and existing_end > start:
-                raise BusinessExceptions("One or more selected equipment items are already booked")
+                raise BusinessExceptions("所选设备中有一件或多件在该时间段已被预约，请更换时间或设备。")
 
     @staticmethod
     def _replace_equipment_links(db: Session, booking: Booking, equipment_ids: list[int]) -> None:
@@ -107,7 +107,7 @@ class BookingService:
         start = BookingService._parse_time(booking.start_time)
         end = BookingService._parse_time(booking.end_time)
         if start >= end:
-            raise BusinessExceptions("End time must be later than start time")
+            raise BusinessExceptions("结束时间必须晚于开始时间。")
 
         # Serialize booking checks for the same laboratory.
         locked_laboratory = (
@@ -120,7 +120,7 @@ class BookingService:
             .first()
         )
         if locked_laboratory is None:
-            raise BusinessExceptions("Selected laboratory is not available")
+            raise BusinessExceptions("所选实验室当前不可预约。")
 
         equipment_ids = BookingService._validate_resources(db, booking.laboratory_id, booking.equipment_ids)
         BookingService._ensure_no_conflict(db, booking.laboratory_id, equipment_ids, start, end)
@@ -146,7 +146,7 @@ class BookingService:
     def get_booking_by_id(db: Session, booking_id: int) -> Booking:
         booking = db.query(Booking).filter(Booking.id == booking_id).first()
         if not booking:
-            raise BusinessExceptions("Booking not found")
+            raise BusinessExceptions("未找到对应预约。")
         return booking
 
     @staticmethod
@@ -177,7 +177,7 @@ class BookingService:
     def update_booking(db: Session, booking_id: int, booking: BookingUpdate) -> Booking:
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         if db_booking.status != PENDING:
-            raise BusinessExceptions("Only pending bookings can be modified")
+            raise BusinessExceptions("只有待审核状态的预约可以修改。")
 
         update_data = booking.model_dump(exclude_unset=True)
         next_laboratory_id = update_data.pop("laboratory_id", db_booking.laboratory_id)
@@ -186,7 +186,7 @@ class BookingService:
         start = BookingService._parse_time(next_start)
         end = BookingService._parse_time(next_end)
         if start >= end:
-            raise BusinessExceptions("End time must be later than start time")
+            raise BusinessExceptions("结束时间必须晚于开始时间。")
 
         equipment_was_sent = "equipment_ids" in update_data
         next_equipment_ids = update_data.pop("equipment_ids", None)
@@ -211,9 +211,9 @@ class BookingService:
     def approve_booking(db: Session, booking_id: int, approve_data: BookingApprove, approved_by: int) -> Booking:
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         if db_booking.status != PENDING:
-            raise BusinessExceptions("Only pending bookings can be approved")
+            raise BusinessExceptions("只有待审核状态的预约可以审批。")
         if approve_data.status not in [APPROVED, REJECTED]:
-            raise BusinessExceptions("Invalid approval status")
+            raise BusinessExceptions("审批状态不正确。")
         db_booking.status = approve_data.status
         db_booking.reject_reason = approve_data.reject_reason
         db_booking.remarks = approve_data.remarks
@@ -238,19 +238,19 @@ class BookingService:
             .first()
         )
         if db_booking is None:
-            raise BusinessExceptions("Booking not found")
+            raise BusinessExceptions("未找到对应预约。")
         if actor_user_id is not None and db_booking.user_id != actor_user_id and actor_role != "admin":
-            raise BusinessExceptions("You can only cancel your own booking")
+            raise BusinessExceptions("你只能取消自己的预约。")
         if db_booking.status in [REJECTED, CANCELLED]:
-            raise BusinessExceptions("This booking cannot be cancelled")
+            raise BusinessExceptions("这条预约当前不可取消。")
         db_booking.status = CANCELLED
         db.add(db_booking)
         db.commit()
-        return {"message": "Booking cancelled"}
+        return {"message": "预约已取消。"}
 
     @staticmethod
     def delete_booking(db: Session, booking_id: int) -> dict:
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         db.delete(db_booking)
         db.commit()
-        return {"message": "Booking deleted"}
+        return {"message": "预约已删除。"}
