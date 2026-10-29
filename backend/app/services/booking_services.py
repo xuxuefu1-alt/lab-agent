@@ -9,6 +9,10 @@ from app.model.equipment import Equipment
 from app.model.laboratory import Laboratory
 from app.model.user import User
 from app.schemas.booking import BookingApprove, BookingCreate, BookingUpdate
+from app.services.booking_policy import (
+    format_standard_booking_slots,
+    is_standard_booking_slot,
+)
 
 
 PENDING = "待审核"
@@ -109,6 +113,10 @@ class BookingService:
         end = BookingService._parse_time(booking.end_time)
         if start >= end:
             raise BusinessExceptions("结束时间必须晚于开始时间。")
+        if not is_standard_booking_slot((start.hour, start.minute, end.hour, end.minute)):
+            raise BusinessExceptions(
+                f"该时间段不属于可预约时段，请选择：{format_standard_booking_slots()}。"
+            )
 
         # Serialize booking checks for the same laboratory.
         locked_laboratory = (
@@ -220,6 +228,10 @@ class BookingService:
         end = BookingService._parse_time(next_end)
         if start >= end:
             raise BusinessExceptions("结束时间必须晚于开始时间。")
+        if not is_standard_booking_slot((start.hour, start.minute, end.hour, end.minute)):
+            raise BusinessExceptions(
+                f"该时间段不属于可预约时段，请选择：{format_standard_booking_slots()}。"
+            )
 
         equipment_was_sent = "equipment_ids" in update_data
         next_equipment_ids = update_data.pop("equipment_ids", None)

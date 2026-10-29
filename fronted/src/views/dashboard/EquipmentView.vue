@@ -147,6 +147,10 @@ async function fetchLaboratories() {
   }
 }
 
+function getLaboratoryName(laboratoryId) {
+  return laboratoryList.value.find(item => item.id === laboratoryId)?.name || `实验室#${laboratoryId}`
+}
+
 function getAvailabilityLabel(row) {
   if (row.status !== 1) return '已停用'
   if (row.maintenance_status && !['正常', 'Normal'].includes(row.maintenance_status)) {
@@ -403,6 +407,14 @@ onMounted(() => {
       <el-table-column prop="id" label="ID" width="60" sortable="custom" />
       <el-table-column prop="name" label="设备名称" min-width="150" />
       <el-table-column prop="equipment_type" label="设备类型" min-width="120" />
+      <el-table-column label="所属实验室" min-width="170">
+        <template #default="{ row }">
+          <div>{{ row.laboratory_name || getLaboratoryName(row.laboratory_id) }}</div>
+          <small v-if="row.laboratory_location" class="equipment-laboratory-location">
+            {{ row.laboratory_location }}
+          </small>
+        </template>
+      </el-table-column>
       <el-table-column prop="model" label="型号" min-width="120" />
       <el-table-column
         prop="serial_number"
@@ -616,6 +628,11 @@ onMounted(() => {
 <style scoped>
 .equipment-container {
   padding: 20px;
+}
+
+.equipment-laboratory-location {
+  color: #909399;
+  font-size: 12px;
 }
 
 .toolbar {

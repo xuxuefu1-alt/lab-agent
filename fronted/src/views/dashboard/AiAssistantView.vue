@@ -64,12 +64,12 @@ function isDemoConversationId(id) {
 const quickPrompts = [
   {
     title: '预约建议',
-    text: '帮我推荐本周适合做材料测试的实验室',
+    text: '帮我看看现在有哪些实验室和设备可以预约',
     icon: Clock,
   },
   {
     title: '设备查询',
-    text: '查看高频使用设备的预约情况',
+    text: '查询所有可预约的设备，并告诉我每台设备所属实验室',
     icon: MagicStick,
   },
   {
@@ -129,8 +129,9 @@ const isEmptyConversation = computed(
 )
 
 function selectPrompt(text) {
+  if (isTyping.value) return
   draft.value = text
-  nextTick(() => document.querySelector('.assistant-input')?.focus())
+  sendMessage()
 }
 
 async function startNewConversation() {

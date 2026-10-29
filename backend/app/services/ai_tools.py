@@ -18,6 +18,7 @@ from app.model.booking import Booking
 from app.schemas.booking import BookingCreate
 from app.config import settings
 from app.services.booking_services import BookingService
+from app.services.booking_policy import is_standard_booking_slot
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +326,9 @@ def _list_my_bookings(
     limit: int,
 ) -> dict[str, Any]:
     query = db.query(Booking).filter(Booking.user_id == user_id)
-    if status:
+    if status == "active":
+        query = query.filter(Booking.status.in_(["待审核", "已批准"]))
+    elif status:
         query = query.filter(Booking.status == status)
     rows = query.order_by(Booking.id.desc()).limit(limit).all()
     return {"items": [_booking_item(db, row) for row in rows], "count": len(rows)}
@@ -472,6 +475,15 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
             end = BookingService._parse_time(request.end_time)
             if start >= end:
                 return json.dumps({"ok": False, "error": "结束时间必须晚于开始时间。"}, ensure_ascii=False)
+            if not is_standard_booking_slot((start.hour, start.minute, end.hour, end.minute)):
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "error": "该时间段不属于可预约时段，请选择 08:00–10:00、10:00–12:00、14:00–16:00、16:00–18:00 或 19:00–21:00。",
+                        "error_code": "invalid_standard_slot",
+                    },
+                    ensure_ascii=False,
+                )
             normalized_ids = BookingService._validate_resources(db, request.laboratory_id, request.equipment_ids)
             BookingService._ensure_no_conflict(db, request.laboratory_id, normalized_ids, start, end)
             laboratory = db.query(Laboratory).filter(Laboratory.id == request.laboratory_id).first()
@@ -575,7 +587,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         StructuredTool.from_function(
             func=list_my_bookings,
             name="list_my_bookings",
-            description="List bookings belonging to the authenticated user, including laboratory and equipment names.",
+            description="List bookings belonging to the authenticated user. Use status=active for current pending or approved bookings; use no status only when the user explicitly asks for booking history.",
             args_schema=MyBookingsToolArgs,
         ),
         StructuredTool.from_function(

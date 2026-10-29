@@ -28,7 +28,12 @@ from app.services.ai_tools import (
     verify_cancel_booking_confirmation,
 )
 from app.services.booking_services import BookingService
-from app.services.booking_workflow import is_booking_resume_intent, is_create_booking_intent
+from app.services.booking_workflow import (
+    is_booking_query_intent,
+    is_booking_resume_intent,
+    is_create_booking_intent,
+    is_resource_query_intent,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -382,6 +387,7 @@ def _persist_ai_result(
         tool_name=tool_name,
         result=result,
     )
+    ai_memory_service.refresh_conversation_summary(db, conversation)
     db.commit()
     result["conversation_id"] = conversation.client_key
     return result
@@ -546,6 +552,151 @@ def _run_explicit_cancel_workflow(
         raise BusinessExceptions(message="取消预约信息暂时无法校验，请稍后重试") from exc
 
 
+def _run_explicit_resource_query(
+    question: str,
+    db: Session,
+    current_user: User,
+    conversation: Any,
+    progress_callback: Any = None,
+) -> dict[str, Any] | None:
+    if not is_resource_query_intent(question):
+        return None
+
+    try:
+        _emit_progress(progress_callback, "intent", "正在识别资源查询需求", 15)
+        tool = _tool_from_name(db, current_user, "list_open_laboratories_with_equipment")
+        _emit_progress(
+            progress_callback,
+            "agent",
+            "正在查询开放实验室及其可预约设备",
+            45,
+            tool="list_open_laboratories_with_equipment",
+        )
+        raw = json.loads(tool.invoke({"limit": 20}))
+        if not raw.get("ok"):
+            return _persist_ai_result(
+                db,
+                conversation,
+                current_user,
+                {
+                    "content": raw.get("error") or "暂时无法查询开放实验室和设备。",
+                    "tool_calls": [{"name": tool.name, "ok": False}],
+                    "blocks": [],
+                    "confirmation_token": None,
+                },
+                "resource_query",
+                tool.name,
+                "failed",
+            )
+
+        data = raw.get("data") or {}
+        rows = data.get("items") or []
+        count = data.get("count", len(rows))
+        blocks = [{
+            "type": "laboratory_equipment_list",
+            "title": "实验室与可预约设备",
+            "items": rows,
+            "count": count,
+        }]
+        _emit_progress(progress_callback, "response", "正在整理查询结果", 90)
+        return _persist_ai_result(
+            db,
+            conversation,
+            current_user,
+            {
+                "content": f"当前可查询到 {count} 间开放实验室。",
+                "tool_calls": [{"name": tool.name, "ok": True}],
+                "blocks": blocks,
+                "confirmation_token": None,
+            },
+            "resource_query",
+            tool.name,
+            "success",
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Explicit resource query failed", extra={"user_id": current_user.id})
+        raise BusinessExceptions(message="开放实验室和设备查询暂时失败，请稍后重试。") from exc
+
+
+def _run_explicit_booking_query(
+    question: str,
+    db: Session,
+    current_user: User,
+    conversation: Any,
+    progress_callback: Any = None,
+) -> dict[str, Any] | None:
+    if not is_booking_query_intent(question):
+        return None
+
+    try:
+        _emit_progress(progress_callback, "intent", "正在识别预约查询需求", 15)
+        tool = _tool_from_name(db, current_user, "list_my_bookings")
+        explicit_status = next(
+            (
+                value
+                for value in ("待审核", "已批准", "已拒绝", "已取消")
+                if value in question
+            ),
+            None,
+        )
+        wants_history = any(phrase in question for phrase in ("预约记录", "全部预约", "所有预约"))
+        status = explicit_status if explicit_status else (None if wants_history else "active")
+        _emit_progress(
+            progress_callback,
+            "query_bookings",
+            "正在查询你的预约记录",
+            45,
+            tool="list_my_bookings",
+        )
+        raw = json.loads(tool.invoke({"status": status, "limit": 50}))
+        if not raw.get("ok"):
+            return _persist_ai_result(
+                db,
+                conversation,
+                current_user,
+                {
+                    "content": raw.get("error") or "暂时无法查询你的预约。",
+                    "tool_calls": [{"name": tool.name, "ok": False}],
+                    "blocks": [],
+                    "confirmation_token": None,
+                },
+                "booking_query",
+                tool.name,
+                "failed",
+            )
+
+        data = raw.get("data") or {}
+        rows = data.get("items") or []
+        count = data.get("count", len(rows))
+        blocks = [{
+            "type": "booking_list",
+            "title": "我的预约",
+            "items": rows,
+            "count": count,
+        }]
+        _emit_progress(progress_callback, "response", "正在整理预约查询结果", 90)
+        content = "当前没有符合条件的预约。" if count == 0 else f"当前有 {count} 条符合条件的预约。"
+        return _persist_ai_result(
+            db,
+            conversation,
+            current_user,
+            {
+                "content": content,
+                "tool_calls": [{"name": tool.name, "ok": True}],
+                "blocks": blocks,
+                "confirmation_token": None,
+            },
+            "booking_query",
+            tool.name,
+            "success",
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Explicit booking query failed", extra={"user_id": current_user.id})
+        raise BusinessExceptions(message="预约查询暂时失败，请稍后重试。") from exc
+
+
 def _run_explicit_booking_workflow(
     question: str,
     db: Session,
@@ -558,7 +709,14 @@ def _run_explicit_booking_workflow(
         checkpointer = get_checkpointer()
         booking_thread = thread_id(current_user.id, conversation.client_key, "booking")
         active_thread = has_thread(checkpointer, booking_thread)
-        if is_booking_resume_intent(question) and not active_thread:
+        workflow_record, workflow_payload = ai_memory_service.get_workflow_state(
+            db,
+            current_user,
+            conversation.id,
+            "create_booking",
+        )
+        workflow_active = active_thread or workflow_record is not None
+        if is_booking_resume_intent(question) and not workflow_active:
             return _persist_ai_result(
                 db,
                 conversation,
@@ -573,12 +731,19 @@ def _run_explicit_booking_workflow(
                 None,
                 "needs_input",
             )
-        if not is_create_booking_intent(question) and not active_thread:
+        if not is_create_booking_intent(question) and not workflow_active:
             return None
         _emit_progress(progress_callback, "resolve_booking", "正在解析实验室、设备和预约时间", 35)
         graph = build_booking_graph(db, current_user, checkpointer)
+        graph_input: dict[str, Any] = {"question": question}
+        if not active_thread:
+            graph_input["booking_draft"] = (
+                workflow_payload.get("booking")
+                or workflow_payload.get("draft")
+                or {}
+            )
         state = graph.invoke(
-            {"question": question},
+            graph_input,
             config={"configurable": {"thread_id": booking_thread}},
         )
         result = state.get("result") or {}
@@ -588,17 +753,20 @@ def _run_explicit_booking_workflow(
 
         token = result.get("confirmation_token")
         booking = result.get("booking") or state.get("booking_draft") or {}
-        if token:
-            ai_memory_service.save_workflow_state(
-                db,
-                conversation,
-                current_user,
-                "create_booking",
-                {
-                    "confirmation_token_hash": _confirmation_token_hash(token),
-                    "booking": booking,
-                },
-            )
+        workflow_state = {
+            "confirmation_token_hash": _confirmation_token_hash(token) if token else None,
+            "booking": booking,
+            "draft": state.get("booking_draft") or booking,
+            "reason": result.get("reason"),
+            "last_run_id": uuid4().hex,
+        }
+        ai_memory_service.save_workflow_state(
+            db,
+            conversation,
+            current_user,
+            "create_booking",
+            workflow_state,
+        )
         response = {
             "content": result.get("content", ""),
             "tool_calls": result.get("tool_calls", []),
@@ -624,6 +792,7 @@ def _run_explicit_booking_workflow(
             tool_name=response["tool_calls"][0]["name"] if response["tool_calls"] else None,
             result={"reason": result.get("reason"), "tool_calls": response["tool_calls"]},
         )
+        ai_memory_service.refresh_conversation_summary(db, conversation)
         db.commit()
         return response
     except Exception as exc:
@@ -837,6 +1006,9 @@ def chat_llm(
     _emit_progress(progress_callback, "context", "正在加载当前会话上下文", 10)
     if data.message:
         history: list[Any] = []
+        summary_context = ai_memory_service.build_summary_context(conversation)
+        if summary_context:
+            history.append(SystemMessage(content=summary_context))
         for stored in ai_memory_service.load_recent_messages(db, conversation.id):
             if stored.role in ("user", "student"):
                 history.append(HumanMessage(content=stored.content))
@@ -887,6 +1059,7 @@ def chat_llm(
             tool_name="create_booking",
             result=confirmed_result,
         )
+        ai_memory_service.refresh_conversation_summary(db, conversation)
         db.commit()
         confirmed_result["conversation_id"] = conversation.client_key
         return confirmed_result
@@ -900,6 +1073,26 @@ def chat_llm(
     )
     if explicit_cancellation_result is not None:
         return explicit_cancellation_result
+
+    explicit_booking_query_result = _run_explicit_booking_query(
+        question,
+        db,
+        current_user,
+        conversation,
+        progress_callback,
+    )
+    if explicit_booking_query_result is not None:
+        return explicit_booking_query_result
+
+    explicit_resource_result = _run_explicit_resource_query(
+        question,
+        db,
+        current_user,
+        conversation,
+        progress_callback,
+    )
+    if explicit_resource_result is not None:
+        return explicit_resource_result
 
     explicit_booking_result = _run_explicit_booking_workflow(
         question,
@@ -919,14 +1112,20 @@ def chat_llm(
     }
     try:
         _emit_progress(progress_callback, "agent", "正在分析请求并查询相关信息", 45)
-        graph = _build_graph(db, current_user)
+        checkpointer = get_checkpointer()
+        chat_thread = thread_id(current_user.id, conversation.client_key, "chat")
+        compacted_checkpoint = False
+        if conversation.summary and has_thread(checkpointer, chat_thread):
+            clear_thread(checkpointer, chat_thread)
+            compacted_checkpoint = True
+        graph = _build_graph(db, current_user, checkpointer)
         graph_config = {
             "recursion_limit": MAX_TOOL_ROUNDS * 2 + 1,
             "configurable": {
-                "thread_id": thread_id(current_user.id, conversation.client_key, "chat"),
+                "thread_id": chat_thread,
             },
         }
-        checkpoint_message_count = _checkpoint_message_count(graph, graph_config)
+        checkpoint_message_count = 0 if compacted_checkpoint else _checkpoint_message_count(graph, graph_config)
         result = graph.invoke(
             state,
             config=graph_config,
@@ -1008,6 +1207,7 @@ def chat_llm(
             "success",
             result={"tool_calls": tool_calls},
         )
+        ai_memory_service.refresh_conversation_summary(db, conversation)
         db.commit()
         return {
             "content": content,

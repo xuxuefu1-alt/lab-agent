@@ -9,6 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.model.equipment import Equipment
 from app.model.laboratory import Laboratory
+from app.services.booking_policy import (
+    format_standard_booking_slots,
+    is_standard_booking_slot,
+)
 
 
 BOOKING_WORDS = ("\u9884\u7ea6", "\u9884\u8ba2", "\u8ba2\u9605")
@@ -31,12 +35,26 @@ BOOKING_QUERY_PHRASES = (
     "查看预约",
     "查询预约",
 )
+RESOURCE_QUERY_PHRASES = (
+    "\u54ea\u4e9b\u5b9e\u9a8c\u5ba4",
+    "\u54ea\u4e9b\u8bbe\u5907",
+    "\u6709\u54ea\u4e9b\u5b9e\u9a8c\u5ba4",
+    "\u6709\u54ea\u4e9b\u8bbe\u5907",
+    "\u5b9e\u9a8c\u5ba4\u548c\u8bbe\u5907\u53ef\u4ee5\u9884\u7ea6",
+    "\u53ef\u9884\u7ea6\u7684\u5b9e\u9a8c\u5ba4",
+    "\u53ef\u9884\u7ea6\u7684\u8bbe\u5907",
+    "\u67e5\u8be2\u5b9e\u9a8c\u5ba4\u548c\u8bbe\u5907",
+)
 DATE_WORDS = {
     "\u4eca\u5929": 0,
     "\u4eca\u65e5": 0,
     "\u660e\u5929": 1,
     "\u540e\u5929": 2,
 }
+RELATIVE_DAY_PATTERNS = (
+    (re.compile(r"(?:一周|一星期|7天)(?:后|以后|之后)"), 7),
+    (re.compile(r"(?:两周|两个星期|14天)(?:后|以后|之后)"), 14),
+)
 AM_WORDS = {"\u4e0a\u5348", "\u51cc\u6668"}
 PM_WORDS = {"\u4e0b\u5348", "\u665a\u4e0a"}
 WEEKDAY_WORDS = {
@@ -53,15 +71,44 @@ LOCAL_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
 NORMAL_EQUIPMENT_STATUSES = {"正常", "Normal", "姝ｅ父"}
 
 
+def is_resource_query_intent(text: str) -> bool:
+    normalized = (text or "").strip()
+    if not any(phrase in normalized for phrase in RESOURCE_QUERY_PHRASES):
+        return False
+    explicit_create = (
+        "\u5e2e\u6211\u9884\u7ea6",
+        "\u6211\u8981\u9884\u7ea6",
+        "\u6211\u60f3\u9884\u7ea6",
+        "\u8bf7\u5e2e\u6211\u9884\u7ea6",
+        "\u7533\u8bf7\u9884\u7ea6",
+        "\u521b\u5efa\u9884\u7ea6",
+    )
+    if any(phrase in normalized for phrase in explicit_create):
+        return False
+    return not any(word in normalized for word in DATE_WORDS) and not re.search(
+        r"\d{1,2}(?:\u70b9|:\d{2})",
+        normalized,
+    )
+
+
 def is_create_booking_intent(text: str) -> bool:
     normalized = (text or "").strip()
-    if not any(word in normalized for word in BOOKING_WORDS):
+    if is_resource_query_intent(normalized):
         return False
-    if any(phrase in normalized for phrase in BOOKING_QUERY_PHRASES):
+    if is_booking_query_intent(normalized):
+        return False
+    if not any(word in normalized for word in BOOKING_WORDS):
         return False
     return normalized.startswith(BOOKING_WORDS) or any(
         verb in normalized for verb in BOOKING_VERBS
     )
+
+
+def is_booking_query_intent(text: str) -> bool:
+    normalized = (text or "").strip()
+    if any(phrase in normalized for phrase in ("取消预约", "取消我的预约", "撤销预约", "取消预订")):
+        return False
+    return any(phrase in normalized for phrase in BOOKING_QUERY_PHRASES)
 
 
 def is_booking_resume_intent(text: str) -> bool:
@@ -115,6 +162,10 @@ def _parse_date(text: str, now: datetime) -> datetime.date | None:
 
     for word, offset in DATE_WORDS.items():
         if word in text:
+            return (now + timedelta(days=offset)).date()
+
+    for pattern, offset in RELATIVE_DAY_PATTERNS:
+        if pattern.search(text):
             return (now + timedelta(days=offset)).date()
 
     weekday = re.search(r"(?:(\u672c\u5468|\u8fd9\u5468|\u4e0b\u5468))?[\u5468\u661f](\u4e00|\u4e8c|\u4e09|\u56db|\u4e94|\u516d|\u65e5|\u5929)", text)
@@ -401,12 +452,28 @@ def resolve_booking_request(
         except (TypeError, ValueError):
             time_range = None
 
-    if booking_date is None or time_range is None:
+    if booking_date is None and time_range is None:
         return {
             "handled": True,
             "ready": False,
-            "message": "请补充预约日期与时间段，我再确认预约信息。",
-            "reason": "missing_date_or_time",
+            "message": "请补充预约日期和时间段，例如“明天 14:00–16:00”。",
+            "reason": "missing_date_and_time",
+            "draft": draft,
+        }
+    if booking_date is None:
+        return {
+            "handled": True,
+            "ready": False,
+            "message": f"时间段已识别为 {time_range[0]:02d}:{time_range[1]:02d}–{time_range[2]:02d}:{time_range[3]:02d}，请补充预约日期。",
+            "reason": "missing_date",
+            "draft": draft,
+        }
+    if time_range is None:
+        return {
+            "handled": True,
+            "ready": False,
+            "message": f"预约日期已识别为 {booking_date.strftime('%Y-%m-%d')}，请补充预约时间段。",
+            "reason": "missing_time",
             "draft": draft,
         }
 
@@ -434,6 +501,18 @@ def resolve_booking_request(
             "ready": False,
             "message": "结束时间必须晚于开始时间，请重新提供时间段。",
             "reason": "invalid_time_range",
+            "draft": draft,
+        }
+    if not is_standard_booking_slot(time_range):
+        return {
+            "handled": True,
+            "ready": False,
+            "message": (
+                f"已识别预约日期为 {booking_date.strftime('%Y-%m-%d')}，"
+                f"但 {start.strftime('%H:%M')}–{end.strftime('%H:%M')} 不属于可预约时段。"
+                f"请选择：{format_standard_booking_slots()}。"
+            ),
+            "reason": "invalid_standard_slot",
             "draft": draft,
         }
     if start < current_time.replace(second=0, microsecond=0):

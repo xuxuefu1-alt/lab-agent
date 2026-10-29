@@ -33,6 +33,8 @@ class EquipmentUpdate(BaseModel):
 
 class EquipmentResponse(EquipmentBase):
     id: int
+    laboratory_name: str | None = None
+    laboratory_location: str | None = None
     create_time: datetime | None = None
     update_time: datetime | None = None
     availability_status: str | None = None
