@@ -12,6 +12,7 @@ from app.schemas.booking import (
 from app.services.booking_services import BookingService
 from app.common.respones import success_response
 from app.model.user import User
+from app.model.laboratory import Laboratory
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -57,28 +58,53 @@ async def get_bookings(
     limit: int = Query(10, ge=1, le=100),
     status: str | None = Query(None),
     laboratory_id: int | None = Query(None),
+    user_keyword: str | None = Query(None, max_length=100),
+    time_from: str | None = Query(None, max_length=16),
+    time_to: str | None = Query(None, max_length=16),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """获取预约列表"""
     if current_user.role == "admin":
-        # 管理员可以查看所有预约
-        if status:
-            bookings = BookingService.get_bookings_by_status(db, status, skip, limit)
-        elif laboratory_id:
-            bookings = BookingService.get_bookings_by_laboratory(db, laboratory_id, skip, limit)
-        else:
-            bookings = BookingService.get_all_bookings(db, skip, limit)
-        total = BookingService.get_bookings_count(db)
+        bookings, total = BookingService.list_bookings(
+            db,
+            skip=skip,
+            limit=limit,
+            status=status,
+            laboratory_id=laboratory_id,
+            user_keyword=user_keyword,
+            time_from=time_from,
+            time_to=time_to,
+        )
     else:
         # 学生只能查看自己的预约
-        bookings = BookingService.get_user_bookings(db, current_user.id, skip, limit)
-        total = BookingService.get_user_bookings_count(db, current_user.id)
+        bookings, total = BookingService.list_bookings(
+            db,
+            skip=skip,
+            limit=limit,
+            status=status,
+            laboratory_id=laboratory_id,
+            time_from=time_from,
+            time_to=time_to,
+            user_id=current_user.id,
+        )
+
+    items = []
+    for booking in bookings:
+        item = BookingResponse.model_validate(booking).model_dump()
+        user = db.query(User).filter(User.id == booking.user_id).first()
+        laboratory = db.query(Laboratory).filter(Laboratory.id == booking.laboratory_id).first()
+        item.update({
+            "user_name": user.name if user else None,
+            "username": user.username if user else None,
+            "laboratory_name": laboratory.name if laboratory else None,
+        })
+        items.append(item)
 
     return {
         "code": 200,
         "data": {
-            "items": [BookingResponse.model_validate(b) for b in bookings],
+            "items": items,
             "total": total,
             "skip": skip,
             "limit": limit,

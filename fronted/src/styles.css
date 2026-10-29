@@ -889,6 +889,57 @@ button {
   background: #fceeee;
 }
 
+.assistant-progress-bubble {
+  width: min(290px, 72vw);
+  min-width: 0;
+  padding: 9px 11px;
+}
+
+.assistant-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #416570;
+  font-size: 11px;
+}
+
+.assistant-progress-head small {
+  flex: 0 0 auto;
+  color: #9aa9ae;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.assistant-progress-track {
+  height: 3px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8f0f1;
+}
+
+.assistant-progress-track span {
+  display: block;
+  width: 34%;
+  height: 100%;
+  border-radius: inherit;
+  background: #4d9c99;
+  animation: assistant-progress-slide 1.35s ease-in-out infinite;
+}
+
+@keyframes assistant-progress-slide {
+  0% {
+    transform: translateX(-115%);
+  }
+  50% {
+    transform: translateX(125%);
+  }
+  100% {
+    transform: translateX(285%);
+  }
+}
+
 .assistant-unread {
   width: 5px;
   height: 5px;

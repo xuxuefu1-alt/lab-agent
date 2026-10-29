@@ -7,6 +7,7 @@ from app.model.booking import Booking
 from app.model.booking_equipment import BookingEquipment
 from app.model.equipment import Equipment
 from app.model.laboratory import Laboratory
+from app.model.user import User
 from app.schemas.booking import BookingApprove, BookingCreate, BookingUpdate
 
 
@@ -172,6 +173,38 @@ class BookingService:
     @staticmethod
     def get_bookings_by_laboratory(db: Session, laboratory_id: int, skip: int = 0, limit: int = 10) -> list[Booking]:
         return db.query(Booking).filter(Booking.laboratory_id == laboratory_id).offset(skip).limit(limit).all()
+
+    @staticmethod
+    def list_bookings(
+        db: Session,
+        skip: int = 0,
+        limit: int = 10,
+        status: str | None = None,
+        laboratory_id: int | None = None,
+        user_keyword: str | None = None,
+        time_from: str | None = None,
+        time_to: str | None = None,
+        user_id: int | None = None,
+    ) -> tuple[list[Booking], int]:
+        query = db.query(Booking)
+        if user_keyword:
+            like = f"%{user_keyword}%"
+            query = query.join(User, User.id == Booking.user_id).filter(
+                (User.username.like(like)) | (User.name.like(like))
+            )
+        if user_id is not None:
+            query = query.filter(Booking.user_id == user_id)
+        if status:
+            query = query.filter(Booking.status == status)
+        if laboratory_id is not None:
+            query = query.filter(Booking.laboratory_id == laboratory_id)
+        if time_from:
+            query = query.filter(Booking.end_time >= time_from)
+        if time_to:
+            query = query.filter(Booking.start_time <= time_to)
+        total = query.count()
+        rows = query.order_by(Booking.id.desc()).offset(skip).limit(limit).all()
+        return rows, total
 
     @staticmethod
     def update_booking(db: Session, booking_id: int, booking: BookingUpdate) -> Booking:

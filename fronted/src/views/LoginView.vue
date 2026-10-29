@@ -71,7 +71,7 @@ async function handleLogin() {
         </div>
 
         <div class="login-intro-content">
-          <p class="login-eyebrow">LABORATORY OPERATIONS</p>
+          <p class="login-eyebrow">实验室运营管理</p>
           <h1>实验室预约管理系统</h1>
           <p class="login-intro-copy">
             统一管理实验室、设备与预约安排，让日常协作更清晰、更高效。

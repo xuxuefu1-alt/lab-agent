@@ -21,6 +21,16 @@ BOOKING_RESUME_PHRASES = (
     "接着预约",
     "恢复预约",
 )
+BOOKING_QUERY_PHRASES = (
+    "我的预约",
+    "预约记录",
+    "预约列表",
+    "有哪些预约",
+    "还有哪些预约",
+    "当前预约",
+    "查看预约",
+    "查询预约",
+)
 DATE_WORDS = {
     "\u4eca\u5929": 0,
     "\u4eca\u65e5": 0,
@@ -46,6 +56,8 @@ NORMAL_EQUIPMENT_STATUSES = {"正常", "Normal", "姝ｅ父"}
 def is_create_booking_intent(text: str) -> bool:
     normalized = (text or "").strip()
     if not any(word in normalized for word in BOOKING_WORDS):
+        return False
+    if any(phrase in normalized for phrase in BOOKING_QUERY_PHRASES):
         return False
     return normalized.startswith(BOOKING_WORDS) or any(
         verb in normalized for verb in BOOKING_VERBS

@@ -220,7 +220,7 @@ async function handleUserMenu(command) {
       <template #header>
         <div class="profile-dialog-heading">
           <div>
-            <p class="profile-dialog-kicker">ACCOUNT SETTINGS</p>
+            <p class="profile-dialog-kicker">账户设置</p>
             <h2>修改资料</h2>
             <p>完善个人信息，方便系统识别与联系。</p>
           </div>
@@ -241,9 +241,9 @@ async function handleUserMenu(command) {
           </el-avatar>
           <div class="profile-identity-copy">
             <strong>{{ profileForm.name || authStore.user?.username }}</strong>
-            <span>@{{ authStore.user?.username || 'user' }}</span>
+            <span>@{{ authStore.user?.username || '未设置' }}</span>
           </div>
-          <span class="profile-role">{{ authStore.user?.role || 'user' }}</span>
+          <span class="profile-role">{{ authStore.user?.role === 'admin' ? '管理员' : '学生' }}</span>
         </div>
 
         <el-form
@@ -268,7 +268,7 @@ async function handleUserMenu(command) {
               <el-input
                 v-model="profileForm.email"
                 :prefix-icon="Message"
-                placeholder="name@example.com"
+                placeholder="请输入邮箱地址"
                 maxlength="100"
               />
             </el-form-item>

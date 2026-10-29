@@ -26,6 +26,12 @@ const listData = reactive({
 const laboratoryList = ref([])
 const equipmentList = ref([])
 const equipmentCatalog = ref([])
+const filters = reactive({
+  user_keyword: '',
+  laboratory_id: null,
+  status: null,
+  date_range: [],
+})
 
 const formData = reactive({
   id: null,
@@ -99,7 +105,13 @@ async function fetchBookings() {
   loading.value = true
   try {
     const skip = (listData.currentPage - 1) * listData.pageSize
-    const response = await booking.list(skip, listData.pageSize)
+    const response = await booking.list(skip, listData.pageSize, {
+      user_keyword: filters.user_keyword.trim() || null,
+      laboratory_id: filters.laboratory_id,
+      status: filters.status,
+      time_from: filters.date_range?.[0] ? `${filters.date_range[0]} 00:00` : null,
+      time_to: filters.date_range?.[1] ? `${filters.date_range[1]} 23:59` : null,
+    })
     if (response.code === 200) {
       listData.items = response.data.items || []
       listData.total = response.data.total || 0
@@ -111,6 +123,19 @@ async function fetchBookings() {
   } finally {
     loading.value = false
   }
+}
+
+function applyFilters() {
+  listData.currentPage = 1
+  fetchBookings()
+}
+
+function resetFilters() {
+  filters.user_keyword = ''
+  filters.laboratory_id = null
+  filters.status = null
+  filters.date_range = []
+  applyFilters()
 }
 
 function resetForm() {
@@ -280,6 +305,40 @@ onMounted(() => {
 <template>
   <div class="booking-management-container">
     <div class="toolbar">
+      <div class="booking-filters">
+        <el-input
+          v-model="filters.user_keyword"
+          placeholder="搜索预约人姓名或用户名"
+          clearable
+          style="width: 210px"
+          @keyup.enter="applyFilters"
+        />
+        <el-select v-model="filters.laboratory_id" placeholder="全部实验室" clearable style="width: 180px">
+          <el-option
+            v-for="lab in laboratoryList"
+            :key="lab.id"
+            :label="lab.name"
+            :value="lab.id"
+          />
+        </el-select>
+        <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 140px">
+          <el-option label="待审核" value="待审核" />
+          <el-option label="已批准" value="已批准" />
+          <el-option label="已拒绝" value="已拒绝" />
+          <el-option label="已取消" value="已取消" />
+        </el-select>
+        <el-date-picker
+          v-model="filters.date_range"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          range-separator="至"
+          style="width: 250px"
+        />
+        <el-button type="primary" @click="applyFilters">筛选</el-button>
+        <el-button @click="resetFilters">重置</el-button>
+      </div>
       <div class="actions">
         <el-button :icon="Refresh" circle @click="fetchBookings" />
         <el-button type="primary" :icon="Plus" @click="openDialog">创建预约</el-button>
@@ -289,7 +348,13 @@ onMounted(() => {
     <el-table :data="listData.items" :loading="loading" stripe style="width: 100%">
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column label="实验室" min-width="150">
-        <template #default="{ row }">{{ getLabName(row.laboratory_id) }}</template>
+        <template #default="{ row }">{{ row.laboratory_name || getLabName(row.laboratory_id) }}</template>
+      </el-table-column>
+      <el-table-column label="预约人" min-width="140">
+        <template #default="{ row }">
+          <div>{{ row.user_name || '未填写姓名' }}</div>
+          <small v-if="row.username" class="booking-applicant-username">@{{ row.username }}</small>
+        </template>
       </el-table-column>
       <el-table-column label="预约设备" min-width="220" show-overflow-tooltip>
         <template #default="{ row }">{{ getEquipmentNames(row.equipment_ids || []) }}</template>
@@ -454,8 +519,10 @@ onMounted(() => {
 
 <style scoped>
 .booking-management-container { padding: 20px; }
-.toolbar { display: flex; justify-content: flex-end; margin-bottom: 20px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.booking-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .actions { display: flex; gap: 10px; align-items: center; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 20px; }
 .field-hint { color: #909399; font-size: 12px; line-height: 20px; margin-top: 4px; }
+.booking-applicant-username { color: #909399; font-size: 12px; }
 </style>

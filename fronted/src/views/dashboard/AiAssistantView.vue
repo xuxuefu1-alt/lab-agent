@@ -2,9 +2,9 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  chat as chatApi,
   deleteConversation as deleteConversationApi,
   resetConversation as resetConversationApi,
+  streamChat as streamChatApi,
 } from '../../api/ai'
 import {
   ArrowRight,
@@ -26,6 +26,25 @@ const isTyping = ref(false)
 const chatScroll = ref(null)
 const activeConversationId = ref(null)
 const pendingConfirmationToken = ref(null)
+const progressSteps = ref([])
+const currentProgress = ref(null)
+
+const progressLabels = {
+  context: null,
+  intent: '正在理解你的需求',
+  resolve_booking: '正在整理预约信息',
+  query_bookings: '正在查询你的预约',
+  validate_booking: '正在确认预约是否可以取消',
+  validate_resources: '正在确认实验室和设备是否可用',
+  agent: '正在查询相关信息',
+  response: '正在整理查询结果',
+}
+
+function toUserProgress(event) {
+  const message = progressLabels[event.phase]
+  if (!message) return null
+  return { ...event, message }
+}
 const conversationMessages = ref({})
 const stateHydrated = ref(false)
 
@@ -205,6 +224,8 @@ async function sendMessage() {
   })
   draft.value = ''
   isTyping.value = true
+  progressSteps.value = []
+  currentProgress.value = null
 
   const currentConversation = conversations.value.find(
     (item) => item.id === activeConversationId.value,
@@ -218,10 +239,22 @@ async function sendMessage() {
   scrollToBottom()
 
   try {
-    const response = await chatApi(
+    const response = await streamChatApi(
       messages.value,
       pendingConfirmationToken.value,
       activeConversationId.value,
+      (event) => {
+        if (event.type !== 'progress') return
+        const userProgress = toUserProgress(event)
+        if (!userProgress) return
+        currentProgress.value = userProgress
+        const existing = progressSteps.value.find((step) => step.phase === userProgress.phase)
+        if (existing) {
+          Object.assign(existing, userProgress)
+        } else {
+          progressSteps.value.push(userProgress)
+        }
+      },
     )
 
     if (response.conversationId && response.conversationId !== activeConversationId.value) {
@@ -249,6 +282,7 @@ async function sendMessage() {
     ElMessage.error(error?.message || 'AI 服务暂时不可用，请稍后重试')
   } finally {
     isTyping.value = false
+    currentProgress.value = null
     await nextTick()
     scrollToBottom()
   }
@@ -340,7 +374,7 @@ onMounted(() => {
       <aside class="assistant-sidebar">
         <div class="assistant-side-head">
           <div>
-            <p class="assistant-side-kicker">AI WORKSPACE</p>
+            <p class="assistant-side-kicker">智能助手工作区</p>
             <h2>对话工作区</h2>
           </div>
         </div>
@@ -408,7 +442,7 @@ onMounted(() => {
                   在线
                 </span>
               </div>
-              <p>实验室运营 Copilot · 为预约、设备和流程提供建议</p>
+              <p>实验室运营助手 · 为预约、设备和流程提供建议</p>
             </div>
           </div>
           <div class="assistant-header-actions">
@@ -430,7 +464,7 @@ onMounted(() => {
             <div class="assistant-welcome-mark">
               <el-icon :size="28"><MagicStick /></el-icon>
             </div>
-            <p class="assistant-welcome-kicker">WELCOME BACK</p>
+            <p class="assistant-welcome-kicker">欢迎使用</p>
             <h2>今天想先解决什么问题？</h2>
             <p class="assistant-welcome-copy">
               我可以帮你快速了解实验室资源、设备状态和预约流程。
@@ -500,6 +534,7 @@ onMounted(() => {
                     <div class="assistant-data-main">
                       <strong>{{ item.name }}</strong>
                       <span>{{ item.equipment_type || '设备' }} · {{ item.model || '型号未填写' }}</span>
+                      <span v-if="item.laboratory_name">所属实验室：{{ item.laboratory_name }}{{ item.laboratory_location ? ` · ${item.laboratory_location}` : '' }}</span>
                     </div>
                     <div class="assistant-data-meta">
                       <span>{{ item.maintenance_status || '状态未知' }}</span>
@@ -678,10 +713,16 @@ onMounted(() => {
             <div class="assistant-message-content">
               <div class="assistant-message-meta">
                 <strong>AI 助手</strong>
-                <span>正在思考</span>
+                <span>{{ currentProgress?.message || '正在处理' }}</span>
               </div>
-              <div class="assistant-bubble assistant-typing-bubble">
-                <span></span><span></span><span></span>
+              <div class="assistant-bubble assistant-progress-bubble">
+                <div class="assistant-progress-head">
+                  <span>{{ currentProgress?.message || '正在处理你的请求' }}</span>
+                  <small v-if="progressSteps.length > 1">已完成 {{ progressSteps.length - 1 }} 步</small>
+                </div>
+                <div class="assistant-progress-track" aria-hidden="true">
+                  <span></span>
+                </div>
               </div>
             </div>
           </div>

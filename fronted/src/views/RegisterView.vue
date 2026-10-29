@@ -93,7 +93,7 @@ async function handleRegister() {
         </div>
 
         <div class="login-intro-content">
-          <p class="login-eyebrow">LABORATORY OPERATIONS</p>
+          <p class="login-eyebrow">实验室运营管理</p>
           <h1>实验室预约管理系统</h1>
           <p class="login-intro-copy">
             创建个人账号，开始管理实验室预约与日常协作。
@@ -156,7 +156,7 @@ async function handleRegister() {
               <el-input
                 v-model="form.email"
                 size="large"
-                placeholder="name@example.com"
+                placeholder="请输入邮箱地址"
                 :prefix-icon="Message"
                 autocomplete="email"
                 maxlength="50"

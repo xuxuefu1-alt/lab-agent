@@ -247,7 +247,23 @@ def _list_laboratory_equipment(
     limit: int,
 ) -> dict[str, Any]:
     rows = _equipment_query(db, laboratory_id, keyword, limit).all()
-    return {"items": [_equipment_item(row) for row in rows], "count": len(rows)}
+    laboratory_ids = {row.laboratory_id for row in rows}
+    laboratories = (
+        db.query(Laboratory)
+        .filter(Laboratory.id.in_(laboratory_ids))
+        .all()
+        if laboratory_ids
+        else []
+    )
+    laboratory_by_id = {row.id: row for row in laboratories}
+    items = []
+    for row in rows:
+        item = _equipment_item(row)
+        laboratory = laboratory_by_id.get(row.laboratory_id)
+        item["laboratory_name"] = laboratory.name if laboratory else None
+        item["laboratory_location"] = laboratory.location if laboratory else None
+        items.append(item)
+    return {"items": items, "count": len(items)}
 
 
 def _list_open_laboratories_with_equipment(
@@ -530,7 +546,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         StructuredTool.from_function(
             func=list_laboratory_equipment,
             name="list_laboratory_equipment",
-            description="List equipment, optionally filtered by laboratory or keyword.",
+            description="List equipment with its owning laboratory name and location. Use this when the user asks which laboratory contains a specific equipment item, type, model, or keyword.",
             args_schema=EquipmentToolArgs,
         ),
         StructuredTool.from_function(

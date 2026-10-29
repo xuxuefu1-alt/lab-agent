@@ -28,6 +28,15 @@ export const booking = {
     if (filters.laboratory_id) {
       params.append('laboratory_id', filters.laboratory_id)
     }
+    if (filters.user_keyword) {
+      params.append('user_keyword', filters.user_keyword)
+    }
+    if (filters.time_from) {
+      params.append('time_from', filters.time_from)
+    }
+    if (filters.time_to) {
+      params.append('time_to', filters.time_to)
+    }
     return request(`/bookings?${params}`, {
       method: 'GET',
     })

@@ -1,4 +1,7 @@
 import { ApiError, request } from './client'
+import { getStoredToken } from '../constants/auth'
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 function unwrapChatResponse(response) {
   if (
@@ -51,6 +54,83 @@ export async function chat(messages, confirmationToken = null, conversationId = 
   })
 
   return unwrapChatResponse(response)
+}
+
+export async function streamChat(
+  messages,
+  confirmationToken = null,
+  conversationId = null,
+  onEvent = () => {},
+  signal,
+) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new ApiError('对话内容不能为空')
+  }
+  const latestMessage = messages
+    .filter((message) => message?.content?.trim())
+    .at(-1)
+  if (!latestMessage) throw new ApiError('对话内容不能为空')
+
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getStoredToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  let response
+  try {
+    response = await fetch(`${API_BASE_URL}/ai/chat/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        conversation_id: conversationId ? String(conversationId) : null,
+        message: latestMessage.content.trim(),
+        confirmation_token: confirmationToken,
+      }),
+      signal,
+    })
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error
+    throw new ApiError('无法连接服务器，请检查后端服务是否已启动')
+  }
+
+  if (!response.ok || !response.body) {
+    const payload = await response.json().catch(() => null)
+    throw new ApiError(payload?.message || 'AI 服务暂时不可用，请稍后重试', response.status, payload)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalResult = null
+
+  const consume = (chunk) => {
+    buffer += decoder.decode(chunk, { stream: true })
+    const packets = buffer.split('\n\n')
+    buffer = packets.pop() || ''
+    for (const packet of packets) {
+      const line = packet.split('\n').find((item) => item.startsWith('data:'))
+      if (!line) continue
+      const event = JSON.parse(line.slice(5).trim())
+      onEvent(event)
+      if (event.type === 'final') finalResult = event
+      if (event.type === 'error') {
+        throw new ApiError(event.message || 'AI 服务暂时不可用，请稍后重试')
+      }
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    consume(value)
+  }
+  if (!finalResult) throw new ApiError('AI 服务未返回完整结果')
+  return {
+    role: 'assistant',
+    content: finalResult.content || finalResult.message || '',
+    blocks: Array.isArray(finalResult.blocks) ? finalResult.blocks : [],
+    confirmationToken: finalResult.confirmation_token || null,
+    conversationId: finalResult.conversation_id || null,
+  }
 }
 
 export async function resetConversation(conversationId) {
