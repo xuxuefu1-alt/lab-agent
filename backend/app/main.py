@@ -12,6 +12,7 @@ from app.model.ai_audit_log import AiAuditLog
 from app.database import Base, engine, SessionLocal
 from app.config import settings
 from app.services.ai_memory_service import cleanup_expired_state
+from app.services.ai_checkpoint import initialize_checkpointer
 from app.api import api
 from app.observability import install_observability
 # 跨域中间件
@@ -39,6 +40,7 @@ install_observability(
 
 @app.on_event("startup")
 def cleanup_ai_state_on_startup():
+    initialize_checkpointer()
     db = SessionLocal()
     try:
         cleanup_expired_state(db)

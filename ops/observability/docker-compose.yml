@@ -1,9 +1,9 @@
 services:
   redis:
-    image: redis:7.4-alpine
+    image: redis/redis-stack-server:7.4.0-v3
     container_name: lag-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-lag-dev-redis}"]
+    command: ["redis-stack-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-lag-dev-redis}"]
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD:-lag-dev-redis}
     ports:

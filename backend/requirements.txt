@@ -8,6 +8,7 @@ PyJWT==2.13.0
 openai==3.14.1
 langchain-core
 langgraph
+langgraph-checkpoint-redis==0.5.2
 langchain-openai
 chromadb==1.5.9
 sentence-transformers==6.0.1

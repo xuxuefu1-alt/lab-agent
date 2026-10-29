@@ -12,6 +12,14 @@ from app.model.laboratory import Laboratory
 
 BOOKING_WORDS = ("\u9884\u7ea6", "\u9884\u8ba2", "\u8ba2\u9605")
 BOOKING_VERBS = ("\u5e2e\u6211", "\u6211\u8981", "\u6211\u60f3", "\u8bf7\u5e2e", "\u7533\u8bf7", "\u521b\u5efa")
+BOOKING_RESUME_PHRASES = (
+    "继续前面的预约",
+    "继续刚才的预约",
+    "继续之前的预约",
+    "继续预约",
+    "接着预约",
+    "恢复预约",
+)
 DATE_WORDS = {
     "\u4eca\u5929": 0,
     "\u4eca\u65e5": 0,
@@ -40,6 +48,11 @@ def is_create_booking_intent(text: str) -> bool:
     return normalized.startswith(BOOKING_WORDS) or any(
         verb in normalized for verb in BOOKING_VERBS
     )
+
+
+def is_booking_resume_intent(text: str) -> bool:
+    normalized = (text or "").strip().casefold()
+    return normalized in BOOKING_RESUME_PHRASES or normalized == "继续"
 
 
 def _parse_date(text: str, now: datetime) -> datetime.date | None:
@@ -214,14 +227,38 @@ def resolve_booking_request(
     db: Session,
     text: str,
     now: datetime | None = None,
+    existing_draft: dict[str, Any] | None = None,
+    workflow_active: bool = False,
+    resume_requested: bool = False,
 ) -> dict[str, Any]:
-    if not is_create_booking_intent(text):
-        return {"handled": False}
-
+    existing_draft = existing_draft or {}
     current_time = now or datetime.now(LOCAL_TZ)
     if current_time.tzinfo is not None:
         current_time = current_time.astimezone(LOCAL_TZ).replace(tzinfo=None)
+
     laboratory, ambiguous, candidates = _resolve_laboratory(db, text)
+    current_date = _parse_date(text, current_time)
+    current_time_range = _parse_time_range(text)
+    has_slot_signal = bool(
+        laboratory
+        or ambiguous
+        or current_date
+        or current_time_range
+        or any(word in text for word in ("预约", "预订", "改成", "换成"))
+    )
+    if not is_create_booking_intent(text) and not (
+        workflow_active and (has_slot_signal or resume_requested)
+    ):
+        return {"handled": False}
+
+    draft: dict[str, Any] = dict(existing_draft)
+    if laboratory is not None:
+        draft.update(
+            {
+                "laboratory_id": laboratory.id,
+                "laboratory_name": laboratory.name,
+            }
+        )
     if ambiguous:
         candidate_text = "、".join(candidates[:5])
         return {
@@ -229,23 +266,40 @@ def resolve_booking_request(
             "ready": False,
             "message": f"请明确要预约哪一间实验室，可选：{candidate_text}。",
             "reason": "ambiguous_laboratory",
+            "draft": draft,
         }
-    if laboratory is None:
+
+    if draft.get("laboratory_id") is None:
         return {
             "handled": True,
             "ready": False,
             "message": "没有识别到对应的开放实验室，请提供实验室名称或所在位置。",
             "reason": "missing_laboratory",
+            "draft": draft,
         }
 
-    booking_date = _parse_date(text, current_time)
-    time_range = _parse_time_range(text)
+    booking_date = current_date
+    time_range = current_time_range
+    if booking_date is None and draft.get("start_time"):
+        try:
+            booking_date = datetime.strptime(draft["start_time"], "%Y-%m-%d %H:%M").date()
+        except (TypeError, ValueError):
+            booking_date = None
+    if time_range is None and draft.get("start_time") and draft.get("end_time"):
+        try:
+            draft_start = datetime.strptime(draft["start_time"], "%Y-%m-%d %H:%M")
+            draft_end = datetime.strptime(draft["end_time"], "%Y-%m-%d %H:%M")
+            time_range = (draft_start.hour, draft_start.minute, draft_end.hour, draft_end.minute)
+        except (TypeError, ValueError):
+            time_range = None
+
     if booking_date is None or time_range is None:
         return {
             "handled": True,
             "ready": False,
             "message": "请补充预约日期与时间段，我再确认预约信息。",
             "reason": "missing_date_or_time",
+            "draft": draft,
         }
 
     start_hour, start_minute, end_hour, end_minute = time_range
@@ -264,6 +318,7 @@ def resolve_booking_request(
             "ready": False,
             "message": "预约时间格式不正确，请重新提供开始和结束时间。",
             "reason": "invalid_time",
+            "draft": draft,
         }
     if start >= end:
         return {
@@ -271,6 +326,7 @@ def resolve_booking_request(
             "ready": False,
             "message": "结束时间必须晚于开始时间，请重新提供时间段。",
             "reason": "invalid_time_range",
+            "draft": draft,
         }
     if start < current_time.replace(second=0, microsecond=0):
         return {
@@ -278,16 +334,24 @@ def resolve_booking_request(
             "ready": False,
             "message": "预约时间不能早于当前时间，请重新提供预约日期和时间段。",
             "reason": "time_in_past",
+            "draft": draft,
         }
 
     return {
         "handled": True,
         "ready": True,
-        "laboratory_id": laboratory.id,
-        "laboratory_name": laboratory.name,
+        "laboratory_id": draft["laboratory_id"],
+        "laboratory_name": draft.get("laboratory_name"),
         "start_time": start.strftime("%Y-%m-%d %H:%M"),
         "end_time": end.strftime("%Y-%m-%d %H:%M"),
         "purpose": "实验室/设备预约",
         "student_count": 1,
         "equipment_ids": [],
+        "draft": {
+            **draft,
+            "laboratory_id": draft.get("laboratory_id"),
+            "laboratory_name": draft.get("laboratory_name"),
+            "start_time": start.strftime("%Y-%m-%d %H:%M"),
+            "end_time": end.strftime("%Y-%m-%d %H:%M"),
+        },
     }

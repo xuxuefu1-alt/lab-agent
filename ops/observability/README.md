@@ -25,10 +25,16 @@ Grafana 已预置 Prometheus、Loki、Tempo 三个数据源。默认账号来自
 在 `backend/.env` 增加以下配置，并使用与 Compose 一致的 Redis 密码：
 
 ```ini
+APP_ENV=development
 REDIS_URL=redis://:change-this-redis-password@127.0.0.1:6379/0
+AI_CHECKPOINT_PREFIX=lab_agent_checkpoint
+AI_CHECKPOINT_TTL_MINUTES=1440
 OTEL_SERVICE_NAME=lab-agent-backend
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4320
 ```
+
+LangGraph checkpoint 使用 Redis Stack 的 RediSearch 索引；生产环境不能将 `REDIS_URL` 指向普通 Redis 镜像。
+生产部署请设置 `APP_ENV=production`，并使用独立的 Redis 密码、持久化卷和受控的 checkpoint 前缀。
 
 然后启动后端：
 

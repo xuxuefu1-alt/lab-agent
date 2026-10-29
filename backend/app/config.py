@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     mysql_url: str  # 数据库
+    APP_ENV: str = "development"
     JWT_SECRT_KEY: str  # 密钥
     JWT_EXPIRE_HOURS: int = 24  # 过期时间
     JWT_ALGORITHM: str 
@@ -13,6 +14,8 @@ class Settings(BaseSettings):
     LLM_BASE_URL:str
     LLM_MODEL:str
     REDIS_URL: str | None = None
+    AI_CHECKPOINT_PREFIX: str = "lab_agent_checkpoint"
+    AI_CHECKPOINT_TTL_MINUTES: int = 1440
     AI_CONTEXT_MESSAGE_LIMIT: int = 8
     AI_CONTEXT_TOKEN_BUDGET: int = 4000
     OTEL_SERVICE_NAME: str = "lab-agent-backend"

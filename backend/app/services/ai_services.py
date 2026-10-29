@@ -16,13 +16,15 @@ from app.model.user import User
 from app.schemas.ai import ChatRequest
 from app.schemas.booking import BookingCreate
 from app.services import ai_memory_service, kb_services
+from app.services.ai_checkpoint import clear_thread, get_checkpointer, has_thread, thread_id
+from app.services.booking_graph import build_booking_graph
 from app.services.ai_tools import (
     build_tools,
     verify_booking_confirmation,
     verify_cancel_booking_confirmation,
 )
-from app.services.booking_workflow import resolve_booking_request
 from app.services.booking_services import BookingService
+from app.services.booking_workflow import is_booking_resume_intent, is_create_booking_intent
 
 
 logger = logging.getLogger(__name__)
@@ -443,16 +445,54 @@ def _run_explicit_booking_workflow(
     current_user: User,
     conversation: Any,
 ) -> dict[str, Any] | None:
-    resolution = resolve_booking_request(db, question)
-    if not resolution.get("handled"):
-        return None
+    try:
+        checkpointer = get_checkpointer()
+        booking_thread = thread_id(current_user.id, conversation.client_key, "booking")
+        active_thread = has_thread(checkpointer, booking_thread)
+        if is_booking_resume_intent(question) and not active_thread:
+            return _persist_ai_result(
+                db,
+                conversation,
+                current_user,
+                {
+                    "content": "当前会话没有未完成的预约流程，请重新告诉我实验室和预约时间。",
+                    "tool_calls": [],
+                    "blocks": [],
+                    "confirmation_token": None,
+                },
+                "booking_workflow",
+                None,
+                "needs_input",
+            )
+        if not is_create_booking_intent(question) and not active_thread:
+            return None
+        graph = build_booking_graph(db, current_user, checkpointer)
+        state = graph.invoke(
+            {"question": question},
+            config={"configurable": {"thread_id": booking_thread}},
+        )
+        result = state.get("result") or {}
+        if not result.get("handled"):
+            return None
 
-    if not resolution.get("ready"):
-        result = {
-            "content": resolution["message"],
-            "tool_calls": [],
-            "blocks": [],
-            "confirmation_token": None,
+        token = result.get("confirmation_token")
+        booking = result.get("booking") or state.get("booking_draft") or {}
+        if token:
+            ai_memory_service.save_workflow_state(
+                db,
+                conversation,
+                current_user,
+                "create_booking",
+                {
+                    "confirmation_token_hash": _confirmation_token_hash(token),
+                    "booking": booking,
+                },
+            )
+        response = {
+            "content": result.get("content", ""),
+            "tool_calls": result.get("tool_calls", []),
+            "blocks": result.get("blocks", []),
+            "confirmation_token": token,
             "conversation_id": conversation.client_key,
         }
         ai_memory_service.append_message(
@@ -460,99 +500,21 @@ def _run_explicit_booking_workflow(
             conversation,
             current_user.id,
             "assistant",
-            result["content"],
-            [],
-            [],
+            response["content"],
+            response["blocks"],
+            response["tool_calls"],
         )
         ai_memory_service.save_audit(
             db,
             current_user,
             conversation.id,
             "booking_workflow",
-            "needs_input",
-            result={"reason": resolution.get("reason")},
+            "needs_input" if not response["tool_calls"] else "success" if response["tool_calls"][0]["ok"] else "failed",
+            tool_name=response["tool_calls"][0]["name"] if response["tool_calls"] else None,
+            result={"reason": result.get("reason"), "tool_calls": response["tool_calls"]},
         )
         db.commit()
-        return result
-
-    try:
-        prepare_tool = next(
-            tool for tool in build_tools(db, current_user)
-            if tool.name == "prepare_create_booking"
-        )
-        raw_result = prepare_tool.invoke(
-            {
-                "laboratory_id": resolution["laboratory_id"],
-                "equipment_ids": resolution["equipment_ids"],
-                "start_time": resolution["start_time"],
-                "end_time": resolution["end_time"],
-                "purpose": resolution["purpose"],
-                "student_count": resolution["student_count"],
-            }
-        )
-        tool_result = json.loads(raw_result)
-        tool_call = {
-            "name": "prepare_create_booking",
-            "ok": bool(tool_result.get("ok")),
-        }
-        if not tool_result.get("ok"):
-            result = {
-                "content": tool_result.get("error") or "当前时间段暂不可预约，请换一个时间段。",
-                "tool_calls": [tool_call],
-                "blocks": [],
-                "confirmation_token": None,
-                "conversation_id": conversation.client_key,
-            }
-        else:
-            data = tool_result.get("data") or {}
-            booking = data.get("booking") or {}
-            block = {
-                "type": "booking_confirmation",
-                "title": "请确认预约",
-                "status": data.get("status", "pending_confirmation"),
-                "booking": booking,
-                "count": 1,
-            }
-            token = data.get("confirmation_token")
-            if token:
-                ai_memory_service.save_workflow_state(
-                    db,
-                    conversation,
-                    current_user,
-                    "create_booking",
-                    {
-                        "confirmation_token_hash": _confirmation_token_hash(token),
-                        "booking": booking,
-                    },
-                )
-            result = {
-                "content": "请确认预约信息。",
-                "tool_calls": [tool_call],
-                "blocks": [block],
-                "confirmation_token": token,
-                "conversation_id": conversation.client_key,
-            }
-
-        ai_memory_service.append_message(
-            db,
-            conversation,
-            current_user.id,
-            "assistant",
-            result["content"],
-            result["blocks"],
-            result["tool_calls"],
-        )
-        ai_memory_service.save_audit(
-            db,
-            current_user,
-            conversation.id,
-            "booking_workflow",
-            "success" if result["tool_calls"][0]["ok"] else "failed",
-            tool_name="prepare_create_booking",
-            result={"tool_calls": result["tool_calls"]},
-        )
-        db.commit()
-        return result
+        return response
     except Exception as exc:
         db.rollback()
         logger.exception("Explicit booking workflow failed", extra={"user_id": current_user.id})
@@ -565,10 +527,15 @@ def _execute_confirmed_booking(
     db: Session,
     current_user: User,
     conversation_id: int | None,
+    conversation_key: str | None = None,
 ) -> dict[str, Any] | None:
     if not token:
         return None
     if _is_explicit_rejection(question):
+        clear_thread(
+            get_checkpointer(),
+            thread_id(current_user.id, conversation_key or str(conversation_id or ""), "booking"),
+        )
         return {
             "content": "已取消本次预约提交。",
             "tool_calls": [{"name": "create_booking", "ok": False}],
@@ -630,6 +597,10 @@ def _execute_confirmed_booking(
         "count": 1,
     }
     ai_memory_service.release_idempotency_lock(lock_key)
+    clear_thread(
+        get_checkpointer(),
+        thread_id(current_user.id, conversation_key or str(conversation_id or ""), "booking"),
+    )
     return {
         "content": "预约已提交，当前状态为待审核。",
         "tool_calls": [{"name": "create_booking", "ok": True}],
@@ -708,7 +679,7 @@ def _execute_confirmed_cancellation(
         ai_memory_service.release_idempotency_lock(lock_key)
 
 
-def _build_graph(db: Session, current_user: User):
+def _build_graph(db: Session, current_user: User, checkpointer=None):
     tools = build_tools(db, current_user)
     model = ChatOpenAI(
         model=settings.LLM_MODEL,
@@ -726,7 +697,18 @@ def _build_graph(db: Session, current_user: User):
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", tools_condition, {"tools": "tools", END: END})
     graph.add_edge("tools", "agent")
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer or get_checkpointer())
+
+
+def _checkpoint_message_count(graph: Any, config: dict[str, Any]) -> int:
+    try:
+        snapshot = graph.get_state(config)
+        values = snapshot.values or {}
+        messages = values.get("messages") or []
+        return len(messages)
+    except Exception:
+        logger.exception("Failed to read LangGraph checkpoint state")
+        return 0
 
 
 def chat_llm(data: ChatRequest, db: Session, current_user: User) -> dict[str, Any]:
@@ -767,7 +749,7 @@ def chat_llm(data: ChatRequest, db: Session, current_user: User) -> dict[str, An
         return result
 
     confirmed_result = _execute_confirmed_booking(
-        data.confirmation_token or "", question, db, current_user, conversation.id
+        data.confirmation_token or "", question, db, current_user, conversation.id, conversation.client_key
     )
     if confirmed_result is not None:
         ai_memory_service.append_message(
@@ -817,9 +799,17 @@ def chat_llm(data: ChatRequest, db: Session, current_user: User) -> dict[str, An
         ]
     }
     try:
-        result = _build_graph(db, current_user).invoke(
+        graph = _build_graph(db, current_user)
+        graph_config = {
+            "recursion_limit": MAX_TOOL_ROUNDS * 2 + 1,
+            "configurable": {
+                "thread_id": thread_id(current_user.id, conversation.client_key, "chat"),
+            },
+        }
+        checkpoint_message_count = _checkpoint_message_count(graph, graph_config)
+        result = graph.invoke(
             state,
-            config={"recursion_limit": MAX_TOOL_ROUNDS * 2 + 1},
+            config=graph_config,
         )
         messages = result["messages"]
         final = next(
@@ -828,7 +818,10 @@ def chat_llm(data: ChatRequest, db: Session, current_user: User) -> dict[str, An
         )
         if final is None:
             raise BusinessExceptions(message="Model returned an empty response")
-        tool_messages = [item for item in messages if isinstance(item, ToolMessage)]
+        # Checkpoint keeps the full conversation, but response cards must only
+        # use tool results created during this request.
+        turn_messages = messages[checkpoint_message_count:]
+        tool_messages = [item for item in turn_messages if isinstance(item, ToolMessage)]
         blocks = _build_blocks(tool_messages)
         content = _compact_content(final.content, blocks)
         if _has_booking_intent(question) and not any(
