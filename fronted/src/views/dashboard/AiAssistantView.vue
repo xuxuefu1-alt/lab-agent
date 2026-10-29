@@ -21,6 +21,7 @@ const draft = ref('')
 const isTyping = ref(false)
 const chatScroll = ref(null)
 const activeConversationId = ref(1)
+const pendingConfirmationToken = ref(null)
 const conversationMessages = ref({})
 const stateHydrated = ref(false)
 
@@ -68,6 +69,7 @@ function persistChatState() {
       conversations: conversations.value,
       activeConversationId: activeConversationId.value,
       conversationMessages: conversationMessages.value,
+      pendingConfirmationToken: pendingConfirmationToken.value,
     }),
   )
 }
@@ -86,6 +88,7 @@ function restoreChatState() {
       activeConversationId.value = saved.activeConversationId
       messages.value = conversationMessages.value[saved.activeConversationId] || []
     }
+    pendingConfirmationToken.value = saved.pendingConfirmationToken || null
   } catch {
     localStorage.removeItem(getChatStorageKey())
   }
@@ -110,6 +113,7 @@ function startNewConversation() {
     unread: false,
   })
   messages.value = []
+  pendingConfirmationToken.value = null
   draft.value = ''
   persistChatState()
 }
@@ -117,6 +121,7 @@ function startNewConversation() {
 function selectConversation(conversation) {
   conversationMessages.value[activeConversationId.value] = messages.value
   activeConversationId.value = conversation.id
+  pendingConfirmationToken.value = null
   if (conversationMessages.value[conversation.id]) {
     messages.value = conversationMessages.value[conversation.id]
     persistChatState()
@@ -166,13 +171,20 @@ async function sendMessage() {
   scrollToBottom()
 
   try {
-    const response = await chatApi(messages.value)
+    const response = await chatApi(
+      messages.value,
+      pendingConfirmationToken.value,
+      activeConversationId.value,
+    )
+
+    pendingConfirmationToken.value = response.confirmationToken || null
 
     messages.value.push({
       id: Date.now(),
       role: 'assistant',
       content: response.content,
       blocks: response.blocks || [],
+      confirmationToken: response.confirmationToken || null,
       time: '刚刚',
     })
   } catch (error) {
@@ -191,6 +203,31 @@ function handleInputKeydown(event) {
   }
 }
 
+function confirmPendingBooking() {
+  draft.value = '确认提交'
+  sendMessage()
+}
+
+function cancelPendingBooking() {
+  draft.value = '取消预约提交'
+  sendMessage()
+}
+
+function confirmPendingCancellation() {
+  draft.value = '确认取消预约'
+  sendMessage()
+}
+
+function keepPendingCancellation() {
+  draft.value = '保留预约'
+  sendMessage()
+}
+
+function selectCancellationBooking(bookingId) {
+  draft.value = `取消预约 ${bookingId}`
+  sendMessage()
+}
+
 function scrollToBottom() {
   if (!chatScroll.value) return
   chatScroll.value.scrollTop = chatScroll.value.scrollHeight
@@ -207,6 +244,7 @@ async function copyMessage(content) {
 
 function clearConversation() {
   messages.value = []
+  pendingConfirmationToken.value = null
   conversationMessages.value[activeConversationId.value] = []
   persistChatState()
   ElMessage.success('已清空当前对话')
@@ -450,6 +488,76 @@ onMounted(() => {
                     </div>
                   </div>
                 </div>
+
+                <div v-else-if="block.type === 'booking_confirmation'" class="assistant-booking-confirmation">
+                  <div class="assistant-confirmation-row">
+                    <span>实验室</span>
+                    <strong>{{ block.booking?.laboratory_name || `实验室#${block.booking?.laboratory_id}` }}</strong>
+                  </div>
+                  <div class="assistant-confirmation-row">
+                    <span>设备</span>
+                    <strong>{{ block.booking?.equipment?.map(item => item.name).join('、') || '未选择设备' }}</strong>
+                  </div>
+                  <div class="assistant-confirmation-row">
+                    <span>时间</span>
+                    <strong>{{ block.booking?.start_time }} - {{ block.booking?.end_time }}</strong>
+                  </div>
+                  <div class="assistant-confirmation-row">
+                    <span>用途</span>
+                    <strong>{{ block.booking?.purpose }}</strong>
+                  </div>
+                  <div class="assistant-confirmation-actions">
+                    <el-button type="primary" size="small" @click="confirmPendingBooking">确认提交</el-button>
+                    <el-button size="small" @click="cancelPendingBooking">取消</el-button>
+                  </div>
+                </div>
+
+                <div v-else-if="block.type === 'booking_cancellation_selection'" class="assistant-data-list">
+                  <div v-for="item in block.items || []" :key="item.id" class="assistant-data-row">
+                    <div class="assistant-data-main">
+                      <strong>预约 #{{ item.id }} · {{ item.laboratory_name || `实验室#${item.laboratory_id}` }}</strong>
+                      <span>{{ item.start_time }} - {{ item.end_time }}</span>
+                      <span>{{ item.equipment?.map(equipment => equipment.name).join('、') || '未选择设备' }}</span>
+                    </div>
+                    <div class="assistant-data-meta">
+                      <span>{{ item.status }}</span>
+                      <el-button size="small" @click="selectCancellationBooking(item.id)">选择</el-button>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else-if="block.type === 'booking_cancellation_confirmation'" class="assistant-booking-confirmation">
+                  <div class="assistant-confirmation-row">
+                    <span>预约编号</span>
+                    <strong>#{{ block.booking?.id }}</strong>
+                  </div>
+                  <div class="assistant-confirmation-row">
+                    <span>实验室</span>
+                    <strong>{{ block.booking?.laboratory_name || `实验室#${block.booking?.laboratory_id}` }}</strong>
+                  </div>
+                  <div class="assistant-confirmation-row">
+                    <span>设备</span>
+                    <strong>{{ block.booking?.equipment?.map(item => item.name).join('、') || '未选择设备' }}</strong>
+                  </div>
+                  <div class="assistant-confirmation-row">
+                    <span>时间</span>
+                    <strong>{{ block.booking?.start_time }} - {{ block.booking?.end_time }}</strong>
+                  </div>
+                  <div class="assistant-confirmation-actions">
+                    <el-button type="danger" size="small" @click="confirmPendingCancellation">确认取消</el-button>
+                    <el-button size="small" @click="keepPendingCancellation">保留预约</el-button>
+                  </div>
+                </div>
+
+                <div v-else-if="block.type === 'booking_cancellation_result'" class="assistant-booking-result">
+                  <strong>预约已取消。</strong>
+                  <span>{{ block.booking?.laboratory_name }} · {{ block.booking?.start_time }} - {{ block.booking?.end_time }}</span>
+                </div>
+
+                <div v-else-if="block.type === 'booking_result'" class="assistant-booking-result">
+                  <strong>预约已提交，当前状态为待审核。</strong>
+                  <span>{{ block.booking?.laboratory_name }} · {{ block.booking?.start_time }} - {{ block.booking?.end_time }}</span>
+                </div>
               </div>
               <div v-if="message.role === 'assistant'" class="assistant-message-tools">
                 <el-tooltip content="复制回复" placement="bottom">
@@ -676,6 +784,38 @@ onMounted(() => {
 .assistant-resource-empty {
   margin-top: 10px;
   color: #98a2b3;
+  font-size: 12px;
+}
+
+.assistant-booking-confirmation,
+.assistant-booking-result {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.assistant-confirmation-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.assistant-confirmation-row strong {
+  color: #1f2937;
+  text-align: right;
+}
+
+.assistant-confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.assistant-booking-result span {
+  color: #667085;
   font-size: 12px;
 }
 

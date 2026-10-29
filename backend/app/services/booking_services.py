@@ -108,6 +108,20 @@ class BookingService:
         end = BookingService._parse_time(booking.end_time)
         if start >= end:
             raise BusinessExceptions("End time must be later than start time")
+
+        # Serialize booking checks for the same laboratory.
+        locked_laboratory = (
+            db.query(Laboratory)
+            .filter(
+                Laboratory.id == booking.laboratory_id,
+                Laboratory.status == 1,
+            )
+            .with_for_update()
+            .first()
+        )
+        if locked_laboratory is None:
+            raise BusinessExceptions("Selected laboratory is not available")
+
         equipment_ids = BookingService._validate_resources(db, booking.laboratory_id, booking.equipment_ids)
         BookingService._ensure_no_conflict(db, booking.laboratory_id, equipment_ids, start, end)
 
@@ -211,8 +225,22 @@ class BookingService:
         return db_booking
 
     @staticmethod
-    def cancel_booking(db: Session, booking_id: int) -> dict:
-        db_booking = BookingService.get_booking_by_id(db, booking_id)
+    def cancel_booking(
+        db: Session,
+        booking_id: int,
+        actor_user_id: int | None = None,
+        actor_role: str | None = None,
+    ) -> dict:
+        db_booking = (
+            db.query(Booking)
+            .filter(Booking.id == booking_id)
+            .with_for_update()
+            .first()
+        )
+        if db_booking is None:
+            raise BusinessExceptions("Booking not found")
+        if actor_user_id is not None and db_booking.user_id != actor_user_id and actor_role != "admin":
+            raise BusinessExceptions("You can only cancel your own booking")
         if db_booking.status in [REJECTED, CANCELLED]:
             raise BusinessExceptions("This booking cannot be cancelled")
         db_booking.status = CANCELLED

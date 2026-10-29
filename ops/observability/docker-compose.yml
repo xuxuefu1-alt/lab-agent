@@ -1,0 +1,108 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: lag-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-lag-dev-redis}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-lag-dev-redis}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: lag-redisinsight
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight_data:/data
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: lag-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: lag-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+
+  tempo:
+    image: grafana/tempo:2.7.2
+    container_name: lag-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/config.yml"]
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./tempo/config.yml:/etc/tempo/config.yml:ro
+      - tempo_data:/var/tempo
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.138.0
+    container_name: lag-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yml"]
+    depends_on:
+      - loki
+      - tempo
+    ports:
+      - "4319:4317"
+      - "4320:4318"
+      - "8888:8888"
+    volumes:
+      - ./otel-collector/config.yml:/etc/otelcol-contrib/config.yml:ro
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: lag-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-now}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+
+volumes:
+  redis_data:
+  redisinsight_data:
+  prometheus_data:
+  loki_data:
+  tempo_data:
+  grafana_data:

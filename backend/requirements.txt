@@ -11,3 +11,9 @@ langgraph
 langchain-openai
 chromadb==1.5.9
 sentence-transformers==6.0.1
+redis==6.4.0
+prometheus-client==0.22.1
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-instrumentation-fastapi==0.66b1
+opentelemetry-exporter-otlp-proto-http==1.45.1

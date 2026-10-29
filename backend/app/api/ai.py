@@ -22,5 +22,7 @@ def chat(
         content=result["content"],
         tool_calls=result["tool_calls"],
         blocks=result.get("blocks", []),
+        confirmation_token=result.get("confirmation_token"),
+        conversation_id=result.get("conversation_id"),
     )
     return Respones.success(data=payload.model_dump())

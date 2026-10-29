@@ -20,6 +20,8 @@ function unwrapChatResponse(response) {
     role: response.data.role || 'assistant',
     content: response.data.content,
     blocks: Array.isArray(response.data.blocks) ? response.data.blocks : [],
+    confirmationToken: response.data.confirmation_token || null,
+    conversationId: response.data.conversation_id || null,
   }
 }
 
@@ -36,7 +38,7 @@ function mockChat(messages) {
   })
 }
 
-export async function chat(messages) {
+export async function chat(messages, confirmationToken = null, conversationId = null) {
   if (!Array.isArray(messages) || messages.length === 0) {
     throw new ApiError('对话内容不能为空')
   }
@@ -52,13 +54,19 @@ export async function chat(messages) {
     throw new ApiError('对话内容不能为空')
   }
 
+  const latestMessage = payload[payload.length - 1]
+
   if (useMock) {
-    return mockChat(payload)
+    return mockChat([latestMessage])
   }
 
   const response = await request('/ai/chat', {
     method: 'POST',
-    body: JSON.stringify({ messages: payload }),
+    body: JSON.stringify({
+      conversation_id: conversationId ? String(conversationId) : null,
+      message: latestMessage.content,
+      confirmation_token: confirmationToken,
+    }),
   })
 
   return unwrapChatResponse(response)

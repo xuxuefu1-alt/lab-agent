@@ -1,4 +1,9 @@
+import base64
+import hashlib
+import hmac
 import json
+import logging
+import time
 from typing import Any
 
 from langchain_core.tools import StructuredTool
@@ -9,7 +14,11 @@ from app.model.equipment import Equipment
 from app.model.laboratory import Laboratory
 from app.model.user import User
 from app.model.booking import Booking
+from app.schemas.booking import BookingCreate
+from app.config import settings
 from app.services.booking_services import BookingService
+
+logger = logging.getLogger(__name__)
 
 
 NORMAL_MAINTENANCE_STATUSES = {"正常", "Normal", "姝ｅ父"}
@@ -52,6 +61,22 @@ class MyBookingsToolArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: str | None = Field(default=None, max_length=20)
     limit: int = Field(default=20, ge=1, le=50)
+
+
+class CreateBookingToolArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    laboratory_id: int = Field(..., ge=1)
+    equipment_ids: list[int] = Field(default_factory=list, max_length=20)
+    start_time: str = Field(..., min_length=16, max_length=16)
+    end_time: str = Field(..., min_length=16, max_length=16)
+    purpose: str = Field(default="实验室/设备预约", min_length=1, max_length=500)
+    student_count: int = Field(default=1, ge=1, le=100)
+    remarks: str | None = Field(default=None, max_length=500)
+
+
+class CancelBookingToolArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    booking_id: int = Field(..., ge=1)
 
 
 def _laboratory_item(item: Laboratory) -> dict[str, Any]:
@@ -133,6 +158,57 @@ def _booking_item(db: Session, item: Booking) -> dict[str, Any]:
         "reject_reason": item.reject_reason,
         "remarks": item.remarks,
     }
+
+
+def _encode_confirmation(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    body = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    signature = hmac.new(settings.JWT_SECRT_KEY.encode("utf-8"), body.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{body}.{signature}"
+
+
+def verify_booking_confirmation(token: str, current_user: User) -> dict[str, Any]:
+    try:
+        body, signature = token.split(".", 1)
+        expected = hmac.new(
+            settings.JWT_SECRT_KEY.encode("utf-8"), body.encode("ascii"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("invalid signature")
+        padding = "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode((body + padding).encode("ascii")))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError, TypeError) as exc:
+        raise ValueError("invalid confirmation token") from exc
+    if payload.get("action") != "create_booking":
+        raise ValueError("invalid confirmation action")
+    if payload.get("user_id") != current_user.id:
+        raise ValueError("confirmation token belongs to another user")
+    if payload.get("expires_at", 0) < int(time.time()):
+        raise ValueError("confirmation token expired")
+    return payload
+
+
+def verify_cancel_booking_confirmation(token: str, current_user: User) -> dict[str, Any]:
+    try:
+        body, signature = token.split(".", 1)
+        expected = hmac.new(
+            settings.JWT_SECRT_KEY.encode("utf-8"), body.encode("ascii"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("invalid signature")
+        padding = "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode((body + padding).encode("ascii")))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError, TypeError) as exc:
+        raise ValueError("invalid cancellation token") from exc
+    if payload.get("action") != "cancel_booking":
+        raise ValueError("invalid cancellation action")
+    if payload.get("user_id") != current_user.id:
+        raise ValueError("cancellation token belongs to another user")
+    if payload.get("expires_at", 0) < int(time.time()):
+        raise ValueError("cancellation token expired")
+    if not isinstance(payload.get("booking_id"), int):
+        raise ValueError("invalid booking id")
+    return payload
 
 
 def _active_laboratories(db: Session, keyword: str | None, limit: int) -> list[Laboratory]:
@@ -238,6 +314,18 @@ def _list_my_bookings(
     return {"items": [_booking_item(db, row) for row in rows], "count": len(rows)}
 
 
+def _tool_failure(db: Session, exc: Exception) -> str:
+    try:
+        db.rollback()
+    except Exception:
+        logger.exception("Failed to rollback AI tool transaction")
+    logger.exception("AI tool database operation failed")
+    return json.dumps(
+        {"ok": False, "error": "数据查询暂时失败，请稍后重试。", "retryable": True},
+        ensure_ascii=False,
+    )
+
+
 def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
     """Build request-scoped read-only tools; identity and DB access stay server-side."""
 
@@ -250,7 +338,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         try:
             return json.dumps({"ok": True, "data": _list_open_laboratories(db, keyword, limit)}, ensure_ascii=False)
         except Exception as exc:
-            return json.dumps({"ok": False, "error": str(exc)[:300]}, ensure_ascii=False)
+            return _tool_failure(db, exc)
 
     def list_laboratory_equipment(
         laboratory_id: int | None = None,
@@ -265,7 +353,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
                 ensure_ascii=False,
             )
         except Exception as exc:
-            return json.dumps({"ok": False, "error": str(exc)[:300]}, ensure_ascii=False)
+            return _tool_failure(db, exc)
 
     def list_open_laboratories_with_equipment(keyword: str | None = None, limit: int = 20) -> str:
         if not account_is_enabled():
@@ -276,7 +364,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
                 ensure_ascii=False,
             )
         except Exception as exc:
-            return json.dumps({"ok": False, "error": str(exc)[:300]}, ensure_ascii=False)
+            return _tool_failure(db, exc)
 
     def get_current_user_profile() -> str:
         if not account_is_enabled():
@@ -300,7 +388,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
                 ensure_ascii=False,
             )
         except Exception as exc:
-            return json.dumps({"ok": False, "error": str(exc)[:300]}, ensure_ascii=False)
+            return _tool_failure(db, exc)
 
     def list_users(
         keyword: str | None = None,
@@ -319,7 +407,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
                 ensure_ascii=False,
             )
         except Exception as exc:
-            return json.dumps({"ok": False, "error": str(exc)[:300]}, ensure_ascii=False)
+            return _tool_failure(db, exc)
 
     def list_my_bookings(status: str | None = None, limit: int = 20) -> str:
         if not account_is_enabled():
@@ -330,7 +418,96 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
                 ensure_ascii=False,
             )
         except Exception as exc:
-            return json.dumps({"ok": False, "error": str(exc)[:300]}, ensure_ascii=False)
+            return _tool_failure(db, exc)
+
+    def prepare_create_booking(
+        laboratory_id: int,
+        equipment_ids: list[int] | None = None,
+        start_time: str = "",
+        end_time: str = "",
+        purpose: str = "实验室/设备预约",
+        student_count: int = 1,
+        remarks: str | None = None,
+    ) -> str:
+        if not account_is_enabled():
+            return json.dumps({"ok": False, "error": "Current account is disabled."})
+        try:
+            request = BookingCreate(
+                laboratory_id=laboratory_id,
+                equipment_ids=equipment_ids or [],
+                start_time=start_time,
+                end_time=end_time,
+                purpose=purpose,
+                student_count=student_count,
+                remarks=remarks,
+            )
+            start = BookingService._parse_time(request.start_time)
+            end = BookingService._parse_time(request.end_time)
+            if start >= end:
+                return json.dumps({"ok": False, "error": "End time must be later than start time"})
+            normalized_ids = BookingService._validate_resources(db, request.laboratory_id, request.equipment_ids)
+            BookingService._ensure_no_conflict(db, request.laboratory_id, normalized_ids, start, end)
+            laboratory = db.query(Laboratory).filter(Laboratory.id == request.laboratory_id).first()
+            equipment_rows = db.query(Equipment).filter(Equipment.id.in_(normalized_ids)).all() if normalized_ids else []
+            booking = {
+                "laboratory_id": request.laboratory_id,
+                "laboratory_name": laboratory.name if laboratory else None,
+                "equipment_ids": normalized_ids,
+                "equipment": [{"id": item.id, "name": item.name} for item in equipment_rows],
+                "start_time": request.start_time,
+                "end_time": request.end_time,
+                "purpose": request.purpose,
+                "student_count": request.student_count,
+                "remarks": request.remarks,
+            }
+            token = _encode_confirmation({
+                "action": "create_booking",
+                "user_id": current_user.id,
+                "expires_at": int(time.time()) + 600,
+                "booking": booking,
+            })
+            return json.dumps(
+                {"ok": True, "data": {"status": "pending_confirmation", "booking": booking, "confirmation_token": token}},
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            return _tool_failure(db, exc)
+
+    def prepare_cancel_booking(booking_id: int) -> str:
+        if not account_is_enabled():
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
+        try:
+            booking = (
+                db.query(Booking)
+                .filter(Booking.id == booking_id, Booking.user_id == current_user.id)
+                .first()
+            )
+            if booking is None:
+                return json.dumps({"ok": False, "error": "未找到属于当前账户的预约。"}, ensure_ascii=False)
+            if booking.status in {"已取消", "已拒绝"}:
+                return json.dumps({"ok": False, "error": "该预约当前不可取消。"}, ensure_ascii=False)
+            summary = _booking_item(db, booking)
+            token = _encode_confirmation(
+                {
+                    "action": "cancel_booking",
+                    "user_id": current_user.id,
+                    "booking_id": booking.id,
+                    "expires_at": int(time.time()) + 600,
+                }
+            )
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "status": "pending_confirmation",
+                        "booking": summary,
+                        "confirmation_token": token,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            return _tool_failure(db, exc)
 
     return [
         StructuredTool.from_function(
@@ -373,5 +550,17 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
             name="list_my_bookings",
             description="List bookings belonging to the authenticated user, including laboratory and equipment names.",
             args_schema=MyBookingsToolArgs,
+        ),
+        StructuredTool.from_function(
+            func=prepare_create_booking,
+            name="prepare_create_booking",
+            description="准备实验室和设备预约。仅在实验室、设备、开始时间和结束时间都已明确后调用；用途默认是“实验室/设备预约”，使用人数默认是 1；返回待确认的预约信息，不代表预约已经创建。",
+            args_schema=CreateBookingToolArgs,
+        ),
+        StructuredTool.from_function(
+            func=prepare_cancel_booking,
+            name="prepare_cancel_booking",
+            description="准备取消当前登录用户自己的预约。只生成待确认信息，不会直接取消；必须先获得用户明确确认。",
+            args_schema=CancelBookingToolArgs,
         ),
     ]

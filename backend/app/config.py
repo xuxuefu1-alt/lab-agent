@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     LLM_API_KEY:str
     LLM_BASE_URL:str
     LLM_MODEL:str
+    REDIS_URL: str | None = None
+    AI_CONTEXT_MESSAGE_LIMIT: int = 8
+    AI_CONTEXT_TOKEN_BUDGET: int = 4000
+    OTEL_SERVICE_NAME: str = "lab-agent-backend"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env", env_file_encoding="utf-8"
     )

@@ -5,8 +5,15 @@ from app.model.user import User
 from app.model.laboratory import Laboratory
 from app.model.equipment import Equipment
 from app.model.booking import Booking
-from app.database import Base, engine
+from app.model.ai_conversation import AiConversation
+from app.model.ai_message import AiMessage
+from app.model.ai_workflow_state import AiWorkflowState
+from app.model.ai_audit_log import AiAuditLog
+from app.database import Base, engine, SessionLocal
+from app.config import settings
+from app.services.ai_memory_service import cleanup_expired_state
 from app.api import api
+from app.observability import install_observability
 # 跨域中间件
 from starlette.middleware.cors import CORSMiddleware
 
@@ -23,6 +30,20 @@ from app.common.exceptions import (
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+install_observability(
+    app,
+    settings.OTEL_SERVICE_NAME,
+    settings.OTEL_EXPORTER_OTLP_ENDPOINT,
+)
+
+
+@app.on_event("startup")
+def cleanup_ai_state_on_startup():
+    db = SessionLocal()
+    try:
+        cleanup_expired_state(db)
+    finally:
+        db.close()
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173"
