@@ -65,6 +65,14 @@ class MyBookingsToolArgs(BaseModel):
     limit: int = Field(default=20, ge=1, le=50)
 
 
+class PendingBookingsToolArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str = Field(default="待审核", pattern="^待审核$")
+    time_from: str | None = Field(default=None, max_length=16)
+    time_to: str | None = Field(default=None, max_length=16)
+    limit: int = Field(default=20, ge=1, le=50)
+
+
 class CreateBookingToolArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     laboratory_id: int = Field(..., ge=1)
@@ -334,6 +342,32 @@ def _list_my_bookings(
     return {"items": [_booking_item(db, row) for row in rows], "count": len(rows)}
 
 
+def _list_pending_bookings(
+    db: Session,
+    status: str,
+    time_from: str | None,
+    time_to: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    query = db.query(Booking).filter(Booking.status == status)
+    if time_from:
+        query = query.filter(Booking.start_time >= time_from)
+    if time_to:
+        query = query.filter(Booking.start_time < time_to)
+    rows = query.order_by(Booking.id.desc()).limit(limit).all()
+    items = []
+    for row in rows:
+        item = _booking_item(db, row)
+        user = db.query(User).filter(User.id == row.user_id).first()
+        item.update({
+            "user_id": row.user_id,
+            "user_name": user.name if user else None,
+            "username": user.username if user else None,
+        })
+        items.append(item)
+    return {"items": items, "count": len(items)}
+
+
 def _tool_failure(db: Session, exc: Exception) -> str:
     try:
         db.rollback()
@@ -445,6 +479,27 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         try:
             return json.dumps(
                 {"ok": True, "data": _list_my_bookings(db, current_user.id, status, limit)},
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            return _tool_failure(db, exc)
+
+    def list_pending_bookings(
+        status: str = "待审核",
+        time_from: str | None = None,
+        time_to: str | None = None,
+        limit: int = 20,
+    ) -> str:
+        if not account_is_enabled():
+            return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
+        if current_user.role != "admin":
+            return json.dumps({"ok": False, "error": "只有管理员可以查询其他用户的待审批预约。"}, ensure_ascii=False)
+        try:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": _list_pending_bookings(db, status, time_from, time_to, limit),
+                },
                 ensure_ascii=False,
             )
         except Exception as exc:
@@ -589,6 +644,12 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
             name="list_my_bookings",
             description="List bookings belonging to the authenticated user. Use status=active for current pending or approved bookings; use no status only when the user explicitly asks for booking history.",
             args_schema=MyBookingsToolArgs,
+        ),
+        StructuredTool.from_function(
+            func=list_pending_bookings,
+            name="list_pending_bookings",
+            description="查询所有用户的待审核预约。仅管理员可用，不执行审批写入。",
+            args_schema=PendingBookingsToolArgs,
         ),
         StructuredTool.from_function(
             func=prepare_create_booking,

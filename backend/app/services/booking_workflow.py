@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.model.equipment import Equipment
 from app.model.laboratory import Laboratory
+from app.domain.booking.resolver import resolve_laboratory
 from app.services.booking_policy import (
     format_standard_booking_slots,
     is_standard_booking_slot,
@@ -263,29 +264,8 @@ def _resolve_laboratory(
     db: Session,
     text: str,
 ) -> tuple[Laboratory | None, bool, list[str]]:
-    laboratories = (
-        db.query(Laboratory)
-        .filter(Laboratory.status == 1)
-        .order_by(Laboratory.id)
-        .all()
-    )
-    scored = [
-        (item, _laboratory_query_score(text, item))
-        for item in laboratories
-    ]
-    scored = [(item, score) for item, score in scored if score > 0]
-    scored.sort(key=lambda pair: (-pair[1], pair[0].id))
-    if not scored:
-        return None, False, []
-
-    best_item, best_score = scored[0]
-    second_score = scored[1][1] if len(scored) > 1 else 0
-    # A close second candidate means the shorthand is ambiguous. Never guess.
-    if len(scored) > 1 and second_score >= best_score - 8:
-        return None, True, [item.name for item, _ in scored[:5]]
-    if best_score >= 75:
-        return best_item, False, []
-    return None, False, []
+    result = resolve_laboratory(db, text)
+    return result.laboratory, result.ambiguous, list(result.candidates)
 
 
 def _equipment_stem(value: str) -> str:
@@ -393,6 +373,7 @@ def resolve_booking_request(
             "ready": False,
             "message": f"请明确要预约哪一间实验室，可选：{candidate_text}。",
             "reason": "ambiguous_laboratory",
+            "missing_fields": ["laboratory"],
             "draft": draft,
         }
 
@@ -402,6 +383,7 @@ def resolve_booking_request(
             "ready": False,
             "message": "没有识别到对应的开放实验室，请提供实验室名称或所在位置。",
             "reason": "missing_laboratory",
+            "missing_fields": ["laboratory"],
             "draft": draft,
         }
 
@@ -417,6 +399,7 @@ def resolve_booking_request(
             "ready": False,
             "message": f"请明确要预约哪一件设备，可选：{candidate_text}。",
             "reason": "ambiguous_equipment",
+            "missing_fields": ["equipment"],
             "draft": draft,
         }
     if equipment is not None:
@@ -434,6 +417,7 @@ def resolve_booking_request(
             "ready": False,
             "message": "没有找到该实验室下可预约的对应设备，请提供设备名称。",
             "reason": "equipment_not_found",
+            "missing_fields": ["equipment"],
             "draft": draft,
         }
 
@@ -458,6 +442,7 @@ def resolve_booking_request(
             "ready": False,
             "message": "请补充预约日期和时间段，例如“明天 14:00–16:00”。",
             "reason": "missing_date_and_time",
+            "missing_fields": ["date", "time"],
             "draft": draft,
         }
     if booking_date is None:
@@ -466,6 +451,7 @@ def resolve_booking_request(
             "ready": False,
             "message": f"时间段已识别为 {time_range[0]:02d}:{time_range[1]:02d}–{time_range[2]:02d}:{time_range[3]:02d}，请补充预约日期。",
             "reason": "missing_date",
+            "missing_fields": ["date"],
             "draft": draft,
         }
     if time_range is None:
@@ -474,6 +460,7 @@ def resolve_booking_request(
             "ready": False,
             "message": f"预约日期已识别为 {booking_date.strftime('%Y-%m-%d')}，请补充预约时间段。",
             "reason": "missing_time",
+            "missing_fields": ["time"],
             "draft": draft,
         }
 

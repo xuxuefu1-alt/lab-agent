@@ -14,6 +14,9 @@ from app.services.booking_workflow import is_booking_resume_intent, resolve_book
 class BookingGraphState(TypedDict, total=False):
     question: str
     booking_draft: dict[str, Any]
+    phase: str
+    missing_fields: list[str]
+    schema_version: int
     result: dict[str, Any]
 
 
@@ -30,10 +33,20 @@ def build_booking_graph(db: Session, current_user: User, checkpointer):
         )
         next_draft = resolution.get("draft") or draft
         if not resolution.get("handled"):
-            return {"booking_draft": next_draft, "result": {"handled": False}}
-        if not resolution.get("ready"):
             return {
                 "booking_draft": next_draft,
+                "phase": "idle",
+                "missing_fields": [],
+                "schema_version": 2,
+                "result": {"handled": False},
+            }
+        if not resolution.get("ready"):
+            phase = "slot_validation_failed" if resolution.get("reason") == "invalid_standard_slot" else "collecting_requirements"
+            return {
+                "booking_draft": next_draft,
+                "phase": phase,
+                "missing_fields": resolution.get("missing_fields") or [],
+                "schema_version": 2,
                 "result": {
                     "handled": True,
                     "content": resolution["message"],
@@ -81,6 +94,9 @@ def build_booking_graph(db: Session, current_user: User, checkpointer):
                 "start_time": booking.get("start_time"),
                 "end_time": booking.get("end_time"),
             },
+            "phase": "pending_confirmation",
+            "missing_fields": [],
+            "schema_version": 2,
             "result": {
                 "handled": True,
                 "content": "请确认预约信息。",

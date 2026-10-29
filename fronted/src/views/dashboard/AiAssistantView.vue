@@ -6,6 +6,7 @@ import {
   resetConversation as resetConversationApi,
   streamChat as streamChatApi,
 } from '../../api/ai'
+import { booking } from '../../api/booking'
 import {
   ArrowRight,
   ChatDotRound,
@@ -239,12 +240,30 @@ async function sendMessage() {
   await nextTick()
   scrollToBottom()
 
+  let streamingAssistant = null
+
   try {
     const response = await streamChatApi(
       messages.value,
       pendingConfirmationToken.value,
       activeConversationId.value,
       (event) => {
+        if (event.type === 'delta' && event.delta) {
+          if (!streamingAssistant) {
+            streamingAssistant = {
+              id: Date.now() + 1,
+              role: 'assistant',
+              content: '',
+              blocks: [],
+              time: '刚刚',
+              isStreaming: true,
+            }
+            messages.value.push(streamingAssistant)
+          }
+          streamingAssistant.content += event.delta
+          nextTick(scrollToBottom)
+          return
+        }
         if (event.type !== 'progress') return
         const userProgress = toUserProgress(event)
         if (!userProgress) return
@@ -271,15 +290,25 @@ async function sendMessage() {
 
     pendingConfirmationToken.value = response.confirmationToken || null
 
-    messages.value.push({
-      id: Date.now(),
-      role: 'assistant',
-      content: response.content,
-      blocks: response.blocks || [],
-      confirmationToken: response.confirmationToken || null,
-      time: '刚刚',
-    })
+    if (streamingAssistant) {
+      streamingAssistant.content = response.content
+      streamingAssistant.blocks = response.blocks || []
+      streamingAssistant.confirmationToken = response.confirmationToken || null
+      streamingAssistant.isStreaming = false
+    } else {
+      messages.value.push({
+        id: Date.now(),
+        role: 'assistant',
+        content: response.content,
+        blocks: response.blocks || [],
+        confirmationToken: response.confirmationToken || null,
+        time: '刚刚',
+      })
+    }
   } catch (error) {
+    if (streamingAssistant) {
+      messages.value = messages.value.filter((message) => message !== streamingAssistant)
+    }
     ElMessage.error(error?.message || 'AI 服务暂时不可用，请稍后重试')
   } finally {
     isTyping.value = false
@@ -319,6 +348,77 @@ function keepPendingCancellation() {
 function selectCancellationBooking(bookingId) {
   draft.value = `取消预约 ${bookingId}`
   sendMessage()
+}
+
+async function approvePendingBooking(item) {
+  try {
+    await ElMessageBox.confirm(
+      `确定审批通过预约“${item.id}”吗？`,
+      '审批确认',
+      {
+        confirmButtonText: '审批通过',
+        cancelButtonText: '返回',
+        type: 'success',
+      },
+    )
+    const response = await booking.approve(item.id, {
+      status: '已批准',
+      reject_reason: null,
+      remarks: null,
+    })
+    if (response.code !== 200) throw new Error(response.message || '审批失败')
+    item.status = '已批准'
+    ElMessage.success('预约已审批通过')
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error?.message || '审批失败')
+  }
+}
+
+async function rejectPendingBooking(item) {
+  try {
+    const promptResult = await ElMessageBox.prompt(
+      `请输入拒绝预约“${item.id}”的原因`,
+      '拒绝预约',
+      {
+        confirmButtonText: '确认拒绝',
+        cancelButtonText: '返回',
+        inputPlaceholder: '例如：该时段需要调整',
+        inputValidator: (value) => (value?.trim() ? true : '请填写拒绝原因'),
+        inputErrorMessage: '请填写拒绝原因',
+      },
+    )
+    const response = await booking.approve(item.id, {
+      status: '已拒绝',
+      reject_reason: promptResult.value.trim(),
+      remarks: null,
+    })
+    if (response.code !== 200) throw new Error(response.message || '拒绝失败')
+    item.status = '已拒绝'
+    item.reject_reason = promptResult.value.trim()
+    ElMessage.success('预约已拒绝')
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error?.message || '拒绝失败')
+  }
+}
+
+async function cancelPendingBookingAsAdmin(item) {
+  try {
+    await ElMessageBox.confirm(
+      `确定取消预约“${item.id}”吗？取消后该预约将不再占用预约记录。`,
+      '取消预约确认',
+      {
+        confirmButtonText: '确认取消',
+        cancelButtonText: '返回',
+        type: 'warning',
+      },
+    )
+    const response = await booking.cancel(item.id)
+    if (response.code !== 200) throw new Error(response.message || '取消失败')
+    item.status = '已取消'
+    ElMessage.success('预约已取消')
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error?.message || '取消失败')
+  }
 }
 
 function scrollToBottom() {
@@ -514,7 +614,9 @@ onMounted(() => {
               >
                 <div class="assistant-data-card-header">
                   <strong>{{ block.title }}</strong>
-                  <span>{{ block.count ?? block.items?.length ?? 0 }} 项</span>
+                  <span>
+                    {{ block.time_label && block.time_label !== '全部时间' ? `${block.time_label} · ` : '' }}{{ block.count ?? block.items?.length ?? 0 }} 项
+                  </span>
                 </div>
 
                 <div v-if="block.type === 'laboratory_list'" class="assistant-data-list">
@@ -607,6 +709,67 @@ onMounted(() => {
                       <span>{{ item.equipment?.length || 0 }} 件设备</span>
                       <span class="assistant-data-status">{{ item.status }}</span>
                     </div>
+                  </div>
+                </div>
+
+                <div v-else-if="block.type === 'pending_booking_list'" class="assistant-pending-booking-list">
+                  <div
+                    v-for="item in block.items || []"
+                    :key="item.id"
+                    class="assistant-pending-booking-item"
+                  >
+                    <div class="assistant-pending-booking-topline">
+                      <div class="assistant-pending-booking-person">
+                        <span class="assistant-pending-booking-avatar">
+                          <el-icon :size="14"><UserFilled /></el-icon>
+                        </span>
+                        <div class="assistant-data-main">
+                          <strong>{{ item.user_name || item.username || `用户#${item.user_id}` }}</strong>
+                          <span>预约编号 #{{ item.id }}</span>
+                        </div>
+                      </div>
+                      <span class="assistant-pending-booking-status">{{ item.status || '待审核' }}</span>
+                    </div>
+                    <div class="assistant-pending-booking-details">
+                      <div class="assistant-pending-booking-detail">
+                        <span>实验室</span>
+                        <strong>{{ item.laboratory_name || `实验室#${item.laboratory_id}` }}</strong>
+                      </div>
+                      <div class="assistant-pending-booking-detail">
+                        <span>预约时间</span>
+                        <strong>{{ item.start_time }} - {{ item.end_time }}</strong>
+                      </div>
+                      <div class="assistant-pending-booking-detail">
+                        <span>设备</span>
+                        <strong>{{ item.equipment?.map(equipment => equipment.name).join('、') || '未选择设备' }}</strong>
+                      </div>
+                      <div class="assistant-pending-booking-detail">
+                        <span>用途</span>
+                        <strong>{{ item.purpose || '未填写' }}</strong>
+                      </div>
+                    </div>
+                    <div v-if="item.status === '待审核'" class="assistant-pending-booking-actions">
+                      <el-button
+                        type="success"
+                        size="small"
+                        @click="approvePendingBooking(item)"
+                      >审批通过</el-button>
+                      <el-button
+                        type="danger"
+                        plain
+                        size="small"
+                        @click="rejectPendingBooking(item)"
+                      >拒绝</el-button>
+                      <el-button
+                        type="warning"
+                        plain
+                        size="small"
+                        @click="cancelPendingBookingAsAdmin(item)"
+                      >取消</el-button>
+                    </div>
+                  </div>
+                  <div v-if="!(block.items || []).length" class="assistant-pending-booking-empty">
+                    暂无待审批预约
                   </div>
                 </div>
 
@@ -871,6 +1034,98 @@ onMounted(() => {
   font-weight: 600;
 }
 
+.assistant-pending-booking-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: #fbfcfe;
+}
+
+.assistant-pending-booking-item {
+  padding: 12px;
+  border: 1px solid #e7ebf0;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.assistant-pending-booking-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-pending-booking-person {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.assistant-pending-booking-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 8px;
+  background: #eef6f8;
+  color: #2b7c8e;
+}
+
+.assistant-pending-booking-status {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff6e6;
+  color: #b56b00;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.assistant-pending-booking-details {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f2f5;
+}
+
+.assistant-pending-booking-detail {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  font-size: 12px;
+}
+
+.assistant-pending-booking-detail > span {
+  color: #98a2b3;
+}
+
+.assistant-pending-booking-detail > strong {
+  overflow-wrap: anywhere;
+  color: #344054;
+  font-weight: 500;
+}
+
+.assistant-pending-booking-empty {
+  padding: 18px 12px;
+  color: #98a2b3;
+  font-size: 13px;
+  text-align: center;
+}
+
+.assistant-pending-booking-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f2f5;
+}
+
 .assistant-grouped-resource-list {
   display: grid;
 }
@@ -956,6 +1211,10 @@ onMounted(() => {
   .assistant-data-meta {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .assistant-pending-booking-detail {
+    grid-template-columns: 56px minmax(0, 1fr);
   }
 }
 </style>

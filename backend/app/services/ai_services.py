@@ -20,6 +20,11 @@ from app.model.ai_workflow_state import AiWorkflowState
 from app.schemas.ai import ChatRequest
 from app.schemas.booking import BookingCreate
 from app.services import ai_memory_service, kb_services
+from app.services.agent_router import (
+    AgentIntent,
+    RouteDecision,
+    route_request,
+)
 from app.services.ai_checkpoint import clear_thread, get_checkpointer, has_thread, thread_id
 from app.services.booking_graph import build_booking_graph
 from app.services.ai_tools import (
@@ -28,12 +33,6 @@ from app.services.ai_tools import (
     verify_cancel_booking_confirmation,
 )
 from app.services.booking_services import BookingService
-from app.services.booking_workflow import (
-    is_booking_query_intent,
-    is_booking_resume_intent,
-    is_create_booking_intent,
-    is_resource_query_intent,
-)
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +57,17 @@ def _emit_progress(
         "progress": max(0, min(progress, 100)),
         "tool": tool,
     })
+
+
+def _emit_text_deltas(callback: Any, content: str, chunk_size: int = 12) -> None:
+    """Stream deterministic responses in small SSE deltas."""
+    if callback is None or not content:
+        return
+    for index in range(0, len(content), chunk_size):
+        callback({
+            "type": "delta",
+            "delta": content[index:index + chunk_size],
+        })
 
 
 def _confirmation_token_hash(token: str) -> str:
@@ -239,6 +249,13 @@ def _build_blocks(tool_messages: list[ToolMessage]) -> list[dict[str, Any]]:
                 "items": rows,
                 "count": data.get("count", len(rows)),
             }
+        elif message.name == "list_pending_bookings":
+            latest_blocks["pending_booking_list"] = {
+                "type": "pending_booking_list",
+                "title": "待审批预约",
+                "items": rows,
+                "count": data.get("count", len(rows)),
+            }
         elif message.name == "prepare_create_booking":
             latest_blocks["booking_confirmation"] = {
                 "type": "booking_confirmation",
@@ -282,6 +299,8 @@ def _compact_content(content: str, blocks: list[dict[str, Any]]) -> str:
             summaries.append(f"已查询到 {count} 个用户。")
         elif block_type == "booking_list":
             summaries.append(f"当前用户共有 {count} 条预约记录。")
+        elif block_type == "pending_booking_list":
+            summaries.append(f"当前有 {count} 条待审批预约。")
         elif block_type == "booking_confirmation":
             summaries.append("请确认这条预约。")
         elif block_type == "booking_cancellation_confirmation":
@@ -313,11 +332,6 @@ def _is_explicit_rejection(value: str) -> bool:
     }
 
 
-def _is_cancel_intent(value: str) -> bool:
-    normalized = value.strip().lower()
-    return any(keyword in normalized for keyword in ("取消预约", "取消我的预约", "撤销预约", "取消预订"))
-
-
 def _is_cancel_confirmation(value: str) -> bool:
     return value.strip().lower() in {
         "确认取消",
@@ -339,10 +353,6 @@ def _is_cancel_rejection(value: str) -> bool:
     }
 
 
-def _has_booking_intent(value: str) -> bool:
-    return is_create_booking_intent(value)
-
-
 def _confirmation_token_from_messages(tool_messages: list[ToolMessage]) -> str | None:
     for message in reversed(tool_messages):
         if message.name not in {"prepare_create_booking", "prepare_cancel_booking"}:
@@ -358,6 +368,31 @@ def _confirmation_token_from_messages(tool_messages: list[ToolMessage]) -> str |
 
 def _tool_from_name(db: Session, current_user: User, name: str):
     return next(tool for tool in build_tools(db, current_user) if tool.name == name)
+
+
+def _booking_context(
+    db: Session,
+    current_user: User,
+    conversation: Any,
+) -> dict[str, Any]:
+    """Load durable booking state once for deterministic request routing."""
+    checkpointer = get_checkpointer()
+    booking_thread = thread_id(current_user.id, conversation.client_key, "booking")
+    active_thread = has_thread(checkpointer, booking_thread)
+    workflow_record, workflow_payload = ai_memory_service.get_workflow_state(
+        db,
+        current_user,
+        conversation.id,
+        "create_booking",
+    )
+    return {
+        "checkpointer": checkpointer,
+        "booking_thread": booking_thread,
+        "active_thread": active_thread,
+        "workflow_record": workflow_record,
+        "workflow_payload": workflow_payload,
+        "workflow_active": active_thread or workflow_record is not None,
+    }
 
 
 def _persist_ai_result(
@@ -399,8 +434,10 @@ def _run_explicit_cancel_workflow(
     current_user: User,
     conversation: Any,
     progress_callback: Any = None,
+    route: RouteDecision | None = None,
 ) -> dict[str, Any] | None:
-    if not _is_cancel_intent(question):
+    decision = route or route_request(question)
+    if decision.intent is not AgentIntent.CANCEL_BOOKING:
         return None
 
     try:
@@ -448,6 +485,41 @@ def _run_explicit_cancel_workflow(
         id_match = re.search(r"(?:预约|预订|编号|#)\s*([0-9]+)", question)
         selected_id = int(id_match.group(1)) if id_match else None
         selected = next((item for item in items if item.get("id") == selected_id), None) if selected_id else None
+
+        # A cancellation request may identify the booking by laboratory name
+        # instead of booking id. Resolve it against the user's own bookings.
+        if selected is None and not selected_id:
+            lab_match = re.search(r"([\u4e00-\u9fffA-Za-z0-9_-]+实验室)", question)
+            requested_lab = (lab_match.group(1) if lab_match else "").replace(" ", "").casefold()
+            if requested_lab:
+                lab_matches = [
+                    item
+                    for item in items
+                    if requested_lab
+                    in (item.get("laboratory_name") or "").replace(" ", "").casefold()
+                ]
+                if len(lab_matches) == 1:
+                    selected = lab_matches[0]
+                elif len(lab_matches) > 1:
+                    return _persist_ai_result(
+                        db,
+                        conversation,
+                        current_user,
+                        {
+                            "content": "该实验室有多条可取消预约，请选择具体的一条。",
+                            "tool_calls": [{"name": "list_my_bookings", "ok": True}],
+                            "blocks": [{
+                                "type": "booking_cancellation_selection",
+                                "title": "选择要取消的预约",
+                                "items": lab_matches,
+                                "count": len(lab_matches),
+                            }],
+                            "confirmation_token": None,
+                        },
+                        "cancel_booking_workflow",
+                        "list_my_bookings",
+                        "needs_selection",
+                    )
         if selected_id and selected is None:
             return _persist_ai_result(
                 db,
@@ -558,8 +630,10 @@ def _run_explicit_resource_query(
     current_user: User,
     conversation: Any,
     progress_callback: Any = None,
+    route: RouteDecision | None = None,
 ) -> dict[str, Any] | None:
-    if not is_resource_query_intent(question):
+    decision = route or route_request(question)
+    if decision.intent is not AgentIntent.RESOURCE_QUERY:
         return None
 
     try:
@@ -625,8 +699,10 @@ def _run_explicit_booking_query(
     current_user: User,
     conversation: Any,
     progress_callback: Any = None,
+    route: RouteDecision | None = None,
 ) -> dict[str, Any] | None:
-    if not is_booking_query_intent(question):
+    decision = route or route_request(question)
+    if decision.intent is not AgentIntent.BOOKING_QUERY:
         return None
 
     try:
@@ -697,26 +773,108 @@ def _run_explicit_booking_query(
         raise BusinessExceptions(message="预约查询暂时失败，请稍后重试。") from exc
 
 
+def _run_explicit_admin_booking_query(
+    question: str,
+    db: Session,
+    current_user: User,
+    conversation: Any,
+    progress_callback: Any = None,
+    route: RouteDecision | None = None,
+) -> dict[str, Any] | None:
+    decision = route or route_request(question)
+    if decision.intent is not AgentIntent.ADMIN_BOOKING_QUERY:
+        return None
+
+    try:
+        _emit_progress(progress_callback, "intent", "正在识别待审批预约查询需求", 15)
+        tool = _tool_from_name(db, current_user, "list_pending_bookings")
+        query = decision.parameters or {}
+        tool_params = {
+            "status": query.get("status", "待审核"),
+            "time_from": query.get("time_from"),
+            "time_to": query.get("time_to"),
+            "limit": 50,
+        }
+        _emit_progress(
+            progress_callback,
+            "query_bookings",
+            "正在查询其他用户的待审批预约",
+            45,
+            tool="list_pending_bookings",
+        )
+        raw = json.loads(tool.invoke(tool_params))
+        if not raw.get("ok"):
+            return _persist_ai_result(
+                db,
+                conversation,
+                current_user,
+                {
+                    "content": raw.get("error") or "暂时无法查询待审批预约。",
+                    "tool_calls": [{"name": tool.name, "ok": False}],
+                    "blocks": [],
+                    "confirmation_token": None,
+                },
+                "admin_booking_query",
+                tool.name,
+                "failed",
+            )
+
+        data = raw.get("data") or {}
+        rows = data.get("items") or []
+        count = data.get("count", len(rows))
+        blocks = [{
+            "type": "pending_booking_list",
+            "title": "待审批预约",
+            "items": rows,
+            "count": count,
+            "time_label": query.get("time_label", "全部时间"),
+        }]
+        _emit_progress(progress_callback, "response", "正在整理待审批预约结果", 90)
+        time_label = query.get("time_label", "全部时间")
+        content = (
+            f"{time_label}没有待审批预约。"
+            if count == 0
+            else f"{time_label}有 {count} 条待审批预约。"
+        )
+        return _persist_ai_result(
+            db,
+            conversation,
+            current_user,
+            {
+                "content": content,
+                "tool_calls": [{"name": tool.name, "ok": True}],
+                "blocks": blocks,
+                "confirmation_token": None,
+            },
+            "admin_booking_query",
+            tool.name,
+            "success",
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Admin booking query failed", extra={"user_id": current_user.id})
+        raise BusinessExceptions(message="待审批预约查询暂时失败，请稍后重试。") from exc
+
+
 def _run_explicit_booking_workflow(
     question: str,
     db: Session,
     current_user: User,
     conversation: Any,
     progress_callback: Any = None,
+    route: RouteDecision | None = None,
+    booking_context: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     try:
         _emit_progress(progress_callback, "intent", "正在识别预约需求", 15)
-        checkpointer = get_checkpointer()
-        booking_thread = thread_id(current_user.id, conversation.client_key, "booking")
-        active_thread = has_thread(checkpointer, booking_thread)
-        workflow_record, workflow_payload = ai_memory_service.get_workflow_state(
-            db,
-            current_user,
-            conversation.id,
-            "create_booking",
-        )
-        workflow_active = active_thread or workflow_record is not None
-        if is_booking_resume_intent(question) and not workflow_active:
+        context = booking_context or _booking_context(db, current_user, conversation)
+        checkpointer = context["checkpointer"]
+        booking_thread = context["booking_thread"]
+        active_thread = context["active_thread"]
+        workflow_payload = context["workflow_payload"]
+        workflow_active = context["workflow_active"]
+        decision = route or route_request(question, workflow_active)
+        if decision.intent is AgentIntent.BOOKING_RESUME and not workflow_active:
             return _persist_ai_result(
                 db,
                 conversation,
@@ -731,7 +889,7 @@ def _run_explicit_booking_workflow(
                 None,
                 "needs_input",
             )
-        if not is_create_booking_intent(question) and not workflow_active:
+        if decision.intent not in {AgentIntent.BOOKING_CREATE, AgentIntent.BOOKING_RESUME}:
             return None
         _emit_progress(progress_callback, "resolve_booking", "正在解析实验室、设备和预约时间", 35)
         graph = build_booking_graph(db, current_user, checkpointer)
@@ -758,6 +916,9 @@ def _run_explicit_booking_workflow(
             "booking": booking,
             "draft": state.get("booking_draft") or booking,
             "reason": result.get("reason"),
+            "phase": state.get("phase") or ("pending_confirmation" if token else "collecting_requirements"),
+            "missing_fields": state.get("missing_fields") or result.get("missing_fields") or [],
+            "schema_version": state.get("schema_version") or 2,
             "last_run_id": uuid4().hex,
         }
         ai_memory_service.save_workflow_state(
@@ -959,7 +1120,20 @@ def _execute_confirmed_cancellation(
         ai_memory_service.release_idempotency_lock(lock_key)
 
 
-def _build_graph(db: Session, current_user: User, checkpointer=None):
+def _chunk_text_content(message: Any) -> str:
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") in {"text", "output_text"}:
+                parts.append(str(item.get("text") or item.get("content") or ""))
+        return "".join(parts)
+    return ""
+
+
+def _build_graph(db: Session, current_user: User, checkpointer=None, token_callback: Any = None):
     tools = build_tools(db, current_user)
     model = ChatOpenAI(
         model=settings.LLM_MODEL,
@@ -969,7 +1143,21 @@ def _build_graph(db: Session, current_user: User, checkpointer=None):
     ).bind_tools(tools)
 
     def call_model(state: MessagesState):
-        return {"messages": [model.invoke(state["messages"])]}
+        if token_callback is None:
+            return {"messages": [model.invoke(state["messages"])]}
+
+        chunks = []
+        for chunk in model.stream(state["messages"]):
+            chunks.append(chunk)
+            delta = _chunk_text_content(chunk)
+            if delta:
+                token_callback({"type": "delta", "delta": delta})
+        if not chunks:
+            return {"messages": [model.invoke(state["messages"])]}
+        message = chunks[0]
+        for chunk in chunks[1:]:
+            message = message + chunk
+        return {"messages": [message]}
 
     graph = StateGraph(MessagesState)
     graph.add_node("agent", call_model)
@@ -996,6 +1184,7 @@ def chat_llm(
     db: Session,
     current_user: User,
     progress_callback: Any = None,
+    token_callback: Any = None,
 ) -> dict[str, Any]:
     if not settings.LLM_API_KEY:
         raise BusinessExceptions(message="AI 服务尚未配置模型密钥，请联系管理员。")
@@ -1035,6 +1224,7 @@ def chat_llm(
             "cancel_booking",
             "success" if confirmed_cancellation["tool_calls"][0]["ok"] else "cancelled",
         )
+        _emit_text_deltas(token_callback, result.get("content", ""))
         return result
 
     confirmed_result = _execute_confirmed_booking(
@@ -1062,7 +1252,11 @@ def chat_llm(
         ai_memory_service.refresh_conversation_summary(db, conversation)
         db.commit()
         confirmed_result["conversation_id"] = conversation.client_key
+        _emit_text_deltas(token_callback, confirmed_result.get("content", ""))
         return confirmed_result
+
+    booking_context = _booking_context(db, current_user, conversation)
+    route = route_request(question, booking_context["workflow_active"])
 
     explicit_cancellation_result = _run_explicit_cancel_workflow(
         question,
@@ -1070,8 +1264,10 @@ def chat_llm(
         current_user,
         conversation,
         progress_callback,
+        route,
     )
     if explicit_cancellation_result is not None:
+        _emit_text_deltas(token_callback, explicit_cancellation_result.get("content", ""))
         return explicit_cancellation_result
 
     explicit_booking_query_result = _run_explicit_booking_query(
@@ -1080,9 +1276,23 @@ def chat_llm(
         current_user,
         conversation,
         progress_callback,
+        route,
     )
     if explicit_booking_query_result is not None:
+        _emit_text_deltas(token_callback, explicit_booking_query_result.get("content", ""))
         return explicit_booking_query_result
+
+    explicit_admin_booking_query_result = _run_explicit_admin_booking_query(
+        question,
+        db,
+        current_user,
+        conversation,
+        progress_callback,
+        route,
+    )
+    if explicit_admin_booking_query_result is not None:
+        _emit_text_deltas(token_callback, explicit_admin_booking_query_result.get("content", ""))
+        return explicit_admin_booking_query_result
 
     explicit_resource_result = _run_explicit_resource_query(
         question,
@@ -1090,8 +1300,10 @@ def chat_llm(
         current_user,
         conversation,
         progress_callback,
+        route,
     )
     if explicit_resource_result is not None:
+        _emit_text_deltas(token_callback, explicit_resource_result.get("content", ""))
         return explicit_resource_result
 
     explicit_booking_result = _run_explicit_booking_workflow(
@@ -1100,8 +1312,11 @@ def chat_llm(
         current_user,
         conversation,
         progress_callback,
+        route,
+        booking_context,
     )
     if explicit_booking_result is not None:
+        _emit_text_deltas(token_callback, explicit_booking_result.get("content", ""))
         return explicit_booking_result
 
     state = {
@@ -1118,7 +1333,7 @@ def chat_llm(
         if conversation.summary and has_thread(checkpointer, chat_thread):
             clear_thread(checkpointer, chat_thread)
             compacted_checkpoint = True
-        graph = _build_graph(db, current_user, checkpointer)
+        graph = _build_graph(db, current_user, checkpointer, token_callback=token_callback)
         graph_config = {
             "recursion_limit": MAX_TOOL_ROUNDS * 2 + 1,
             "configurable": {
@@ -1144,7 +1359,7 @@ def chat_llm(
         blocks = _build_blocks(tool_messages)
         content = _compact_content(final.content, blocks)
         _emit_progress(progress_callback, "response", "正在整理结构化结果", 90)
-        if _has_booking_intent(question) and not any(
+        if route.intent is AgentIntent.BOOKING_CREATE and not any(
             block.get("type") in {
                 "booking_list",
                 "booking_confirmation",

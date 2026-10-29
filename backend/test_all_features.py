@@ -235,8 +235,8 @@ def test_integration():
     print("\n4. Student creating booking...")
     booking_data = BookingCreate(
         laboratory_id=lab.id,
-        start_time="2024-10-26 09:00",
-        end_time="2024-10-26 11:00",
+        start_time="2024-10-26 10:00",
+        end_time="2024-10-26 12:00",
         purpose="Research project",
         student_count=3
     )

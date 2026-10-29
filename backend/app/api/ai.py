@@ -37,7 +37,13 @@ def _stream_chat_events(data: ChatRequest, user_id: int) -> Iterator[str]:
             user = db.query(User).filter(User.id == user_id).first()
             if user is None:
                 raise ValueError("当前用户不存在")
-            result = ai_services.chat_llm(data, db, user, progress_callback=emit)
+            result = ai_services.chat_llm(
+                data,
+                db,
+                user,
+                progress_callback=emit,
+                token_callback=emit,
+            )
             events.put({
                 "type": "final",
                 "status": "completed",

@@ -6,3 +6,5 @@ dist
 .vscode
 *.log
 .playwright-cli
+__pycache__/
+*.py[cod]
