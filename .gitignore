@@ -2,9 +2,47 @@ node_modules
 dist
 .env
 .env.local
+.env.*
 .idea
 .vscode
 *.log
 .playwright-cli
 __pycache__/
 *.py[cod]
+
+# Python virtual environments and local runtime state
+.venv/
+backend/.venv/
+backend/uploads/
+backend/data/chroma/
+backend/data/models/
+backend/*.log
+
+# Frontend local/build output
+fronted/node_modules/
+fronted/dist/
+fronted/output/
+
+# Local test/browser artifacts
+playwright-report/
+test-results/
+
+# Local regression tests are kept outside the release repository
+backend/test_*.py
+tests/
+**/tests/
+*.test.js
+*.test.ts
+*.test.jsx
+*.test.tsx
+*.spec.js
+*.spec.ts
+*.spec.jsx
+*.spec.tsx
+
+# Temporary delivery notes generated during implementation
+DELIVERY_SUMMARY.txt
+FINAL_DELIVERY.md
+IMPLEMENTATION_REPORT.md
+README_NEW_FEATURES.md
+VERIFICATION_CHECKLIST.txt
