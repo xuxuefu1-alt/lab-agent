@@ -8,6 +8,16 @@ import { laboratory } from '../../api/laboratory'
 import { useAuthStore } from '../../stores/auth'
 
 const authStore = useAuthStore()
+const BOOKING_STATUS = Object.freeze({
+  PENDING: '\u5f85\u5ba1\u6838',
+  APPROVED: '\u5df2\u6279\u51c6',
+  REJECTED: '\u5df2\u62d2\u7edd',
+  CANCELLED: '\u5df2\u53d6\u6d88',
+})
+const UI_TEXT = Object.freeze({
+  approve: '\u5ba1\u6279\u901a\u8fc7',
+  reject: '\u62d2\u7edd',
+})
 const loading = ref(false)
 const dialogVisible = ref(false)
 const approveDialogVisible = ref(false)
@@ -45,10 +55,19 @@ const formData = reactive({
 })
 
 const approveData = reactive({
-  status: '已批准',
+  status: BOOKING_STATUS.APPROVED,
   reject_reason: '',
   remarks: '',
 })
+
+function isAdmin() {
+  const role = String(authStore.user?.role || '').toLowerCase()
+  return role === 'admin' || role === '\u7ba1\u7406\u5458'
+}
+
+function isPendingStatus(status) {
+  return status === BOOKING_STATUS.PENDING || String(status || '').toLowerCase() === 'pending'
+}
 
 const formRules = {
   laboratory_id: [{ required: true, message: '请选择实验室', trigger: 'change' }],
@@ -153,12 +172,26 @@ function resetForm() {
 }
 
 async function openDialog(row = null) {
-  if (row && row.status === '待审核') {
+  if (row && isPendingStatus(row.status)) {
     isEditing.value = true
     dialogTitle.value = '编辑预约'
-    Object.assign(formData, row)
-    formData.equipment_ids = [...(row.equipment_ids || [])]
-    await fetchEquipment(row.laboratory_id)
+    Object.assign(formData, {
+      id: row.id,
+      laboratory_id: row.laboratory_id,
+      equipment_ids: Array.isArray(row.equipment_ids) ? [...row.equipment_ids] : [],
+      start_time: row.start_time || '',
+      end_time: row.end_time || '',
+      purpose: row.purpose || '',
+      student_count: row.student_count || 1,
+      remarks: row.remarks || '',
+    })
+    try {
+      await fetchEquipment(row.laboratory_id)
+    } catch (error) {
+      resetForm()
+      ElMessage.error(error.message || '加载预约编辑数据失败')
+      return
+    }
   } else {
     isEditing.value = false
     dialogTitle.value = '创建预约'
@@ -206,16 +239,43 @@ async function saveForm() {
   }
 }
 
-function openApproveDialog(row) {
+async function approveBooking(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定审批通过预约“${row.id}”吗？`,
+      '审批确认',
+      {
+        confirmButtonText: '审批通过',
+        cancelButtonText: '返回',
+        type: 'success',
+      }
+    )
+    const response = await booking.approve(row.id, {
+      status: BOOKING_STATUS.APPROVED,
+      reject_reason: null,
+      remarks: null,
+    })
+    if (response.code === 200) {
+      ElMessage.success('预约已审批通过')
+      await fetchBookings()
+    } else {
+      ElMessage.error(response.message || '审批失败')
+    }
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error.message || '审批失败')
+  }
+}
+
+function openRejectDialog(row) {
   selectedBooking.value = row
-  approveData.status = '已批准'
+  approveData.status = BOOKING_STATUS.REJECTED
   approveData.reject_reason = ''
   approveData.remarks = ''
   approveDialogVisible.value = true
 }
 
 async function submitApprove() {
-  if (approveData.status === '已拒绝' && !approveData.reject_reason) {
+  if (approveData.status === BOOKING_STATUS.REJECTED && !approveData.reject_reason) {
     ElMessage.error('拒绝预约时必须填写拒绝原因')
     return
   }
@@ -284,10 +344,10 @@ function getEquipmentNames(ids = []) {
 
 function getStatusType(status) {
   return {
-    待审核: 'info',
-    已批准: 'success',
-    已拒绝: 'danger',
-    已取消: 'warning',
+    [BOOKING_STATUS.PENDING]: 'info',
+    [BOOKING_STATUS.APPROVED]: 'success',
+    [BOOKING_STATUS.REJECTED]: 'danger',
+    [BOOKING_STATUS.CANCELLED]: 'warning',
   }[status] || 'info'
 }
 
@@ -368,17 +428,24 @@ onMounted(() => {
           <el-tag :type="getStatusType(row.status)">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="220" align="center" fixed="right">
+      <el-table-column label="操作" width="300" align="center" fixed="right">
         <template #default="{ row }">
           <el-button
-            v-if="row.status === '待审核' && authStore.user.role === 'admin'"
-            type="primary"
+            v-if="isPendingStatus(row.status) && isAdmin()"
+            type="success"
             text
             size="small"
-            @click="openApproveDialog(row)"
-          >审批</el-button>
+            @click="approveBooking(row)"
+          >{{ UI_TEXT.approve }}</el-button>
           <el-button
-            v-if="row.status === '待审核'"
+            v-if="isPendingStatus(row.status) && isAdmin()"
+            type="danger"
+            text
+            size="small"
+            @click="openRejectDialog(row)"
+          >{{ UI_TEXT.reject }}</el-button>
+          <el-button
+            v-if="isPendingStatus(row.status)"
             type="warning"
             text
             size="small"
@@ -386,14 +453,14 @@ onMounted(() => {
             @click="openDialog(row)"
           >编辑</el-button>
           <el-button
-            v-if="row.status !== '已取消' && row.status !== '已拒绝'"
+            v-if="row.status !== BOOKING_STATUS.CANCELLED && row.status !== BOOKING_STATUS.REJECTED"
             type="warning"
             text
             size="small"
             @click="cancelBooking(row)"
           >取消</el-button>
           <el-button
-            v-if="authStore.user.role === 'admin'"
+            v-if="isAdmin()"
             type="danger"
             text
             size="small"

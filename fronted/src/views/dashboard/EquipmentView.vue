@@ -147,6 +147,49 @@ async function fetchLaboratories() {
   }
 }
 
+function getAvailabilityLabel(row) {
+  if (row.status !== 1) return '已停用'
+  if (row.maintenance_status && !['正常', 'Normal'].includes(row.maintenance_status)) {
+    return row.maintenance_status
+  }
+  return row.availability_label || '可预约'
+}
+
+function getAvailabilityTagType(row) {
+  if (row.status !== 1) return 'info'
+  if (row.maintenance_status && !['正常', 'Normal'].includes(row.maintenance_status)) return 'info'
+  if (row.availability_status === 'occupied') return 'danger'
+  if (row.availability_status === 'pending' || row.availability_status === 'reserved') return 'warning'
+  return 'success'
+}
+
+function getReservation(row) {
+  return row.reservation || null
+}
+
+function getReservations(row) {
+  if (Array.isArray(row.reservations) && row.reservations.length) return row.reservations
+  return getReservation(row) ? [getReservation(row)] : []
+}
+
+function getReservationStatusLabel(status) {
+  if (status === '已批准') return '已审批'
+  if (status === '待审核') return '待审批'
+  return status || '未知'
+}
+
+function getReservationStatusType(status) {
+  return status === '已批准' ? 'success' : 'warning'
+}
+
+function getReservationUser(reservation) {
+  return reservation?.user_name || reservation?.username || '未设置'
+}
+
+function getReservationApprover(reservation) {
+  return reservation?.approved_by_name || reservation?.approved_by_username || '--'
+}
+
 async function fetchEquipment() {
   loading.value = true
   try {
@@ -368,6 +411,47 @@ onMounted(() => {
         show-overflow-tooltip
       />
       <el-table-column prop="maintenance_status" label="维护状态" width="100" />
+      <el-table-column label="预约状态" width="120">
+        <template #default="{ row }">
+          <el-popover v-if="getReservations(row).length" placement="top-start" :width="360" trigger="hover">
+            <template #reference>
+              <el-tag :type="getAvailabilityTagType(row)" size="small" class="reservation-trigger">
+                存在预约
+              </el-tag>
+            </template>
+            <div class="reservation-popover">
+              <div class="reservation-popover-title">预约详情（{{ getReservations(row).length }} 条）</div>
+              <div
+                v-for="(reservation, index) in getReservations(row)"
+                :key="reservation.id || index"
+                class="reservation-item"
+              >
+                <div class="reservation-popover-row">
+                  <span>预约人</span>
+                  <strong>{{ getReservationUser(reservation) }}</strong>
+                </div>
+                <div class="reservation-popover-row">
+                  <span>预约时间</span>
+                  <strong>{{ reservation.start_time }} - {{ reservation.end_time }}</strong>
+                </div>
+                <div class="reservation-popover-row">
+                  <span>审批状态</span>
+                  <el-tag :type="getReservationStatusType(reservation.status)" size="small">
+                    {{ getReservationStatusLabel(reservation.status) }}
+                  </el-tag>
+                </div>
+                <div class="reservation-popover-row">
+                  <span>审批人</span>
+                  <strong>{{ getReservationApprover(reservation) }}</strong>
+                </div>
+              </div>
+            </div>
+          </el-popover>
+          <el-tag v-else :type="getAvailabilityTagType(row)" size="small">
+            {{ getAvailabilityLabel(row) }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column
         prop="status"
         label="状态"
@@ -560,5 +644,57 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 20px;
+}
+
+.reservation-trigger {
+  cursor: pointer;
+}
+
+.reservation-popover {
+  display: grid;
+  gap: 10px;
+  color: #303133;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.reservation-popover-title {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 600;
+  padding-bottom: 2px;
+}
+
+.reservation-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+}
+
+.reservation-popover-row > span {
+  color: #909399;
+  flex: 0 0 auto;
+}
+
+.reservation-popover-row > strong {
+  color: #303133;
+  font-weight: 500;
+  text-align: right;
+  line-height: 1.4;
+}
+
+.reservation-item {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.reservation-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 </style>

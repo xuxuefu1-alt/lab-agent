@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -34,6 +34,12 @@ const profileForm = reactive({
   avatar: '',
 })
 const originalProfile = ref({})
+
+onMounted(() => {
+  authStore.refreshUser().catch(() => {
+    // Keep the cached session available if the profile refresh is temporarily unavailable.
+  })
+})
 
 const menuItems = [
   { route: '/dashboard', label: '系统首页', icon: Grid },

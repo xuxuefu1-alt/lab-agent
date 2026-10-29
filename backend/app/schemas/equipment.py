@@ -35,4 +35,16 @@ class EquipmentResponse(EquipmentBase):
     id: int
     create_time: datetime | None = None
     update_time: datetime | None = None
+    availability_status: str | None = None
+    availability_label: str | None = None
+    reservation: dict | None = None
+    reservations: list[dict] = Field(default_factory=list)
+    current_booking_id: int | None = None
+    current_booking_start: str | None = None
+    current_booking_end: str | None = None
+    current_booking_status: str | None = None
+    next_booking_id: int | None = None
+    next_booking_start: str | None = None
+    next_booking_end: str | None = None
+    next_booking_status: str | None = None
     model_config = ConfigDict(from_attributes=True)

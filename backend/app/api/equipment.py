@@ -1,15 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.common.respones import success_response
 from app.database import get_db
 from app.dependencies.auth import get_current_user
-from app.schemas.equipment import (
-    EquipmentCreate,
-    EquipmentUpdate,
-    EquipmentResponse,
-)
+from app.schemas.equipment import EquipmentCreate, EquipmentResponse, EquipmentUpdate
 from app.services.equipment_services import EquipmentService
-from app.common.respones import success_response
+from app.services.resource_availability import get_equipment_availability
+
 
 router = APIRouter(prefix="/equipment", tags=["equipment"])
 
@@ -18,9 +16,8 @@ router = APIRouter(prefix="/equipment", tags=["equipment"])
 async def create_equipment(
     equipment: EquipmentCreate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
-    """创建设备"""
     db_equipment = EquipmentService.create_equipment(db, equipment)
     return {"code": 200, "data": db_equipment, "message": "设备创建成功"}
 
@@ -29,11 +26,12 @@ async def create_equipment(
 async def get_equipment(
     equipment_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
-    """获取设备详情"""
     equipment = EquipmentService.get_equipment_by_id(db, equipment_id)
-    return {"code": 200, "data": equipment, "message": "获取成功"}
+    data = EquipmentResponse.model_validate(equipment).model_dump()
+    data.update(get_equipment_availability(db, [equipment_id]).get(equipment_id, {}))
+    return {"code": 200, "data": data, "message": "获取成功"}
 
 
 @router.get("", response_model=success_response(dict))
@@ -44,15 +42,12 @@ async def get_equipment_list(
     laboratory_id: int | None = Query(None),
     maintenance_status: str | None = Query(None),
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
-    """获取设备列表"""
     if keyword:
         equipment_list = EquipmentService.search_equipment(db, keyword, skip, limit)
     elif laboratory_id:
-        equipment_list = EquipmentService.get_equipment_by_laboratory(
-            db, laboratory_id, skip, limit
-        )
+        equipment_list = EquipmentService.get_equipment_by_laboratory(db, laboratory_id, skip, limit)
     elif maintenance_status:
         equipment_list = EquipmentService.get_equipment_by_maintenance_status(
             db, maintenance_status, skip, limit
@@ -65,23 +60,20 @@ async def get_equipment_list(
     elif laboratory_id is not None:
         total = EquipmentService.get_equipment_count_by_laboratory(db, laboratory_id)
     elif maintenance_status:
-        total = len(
-            EquipmentService.get_equipment_by_maintenance_status(
-                db, maintenance_status, 0, 1000000
-            )
-        )
+        total = len(EquipmentService.get_equipment_by_maintenance_status(db, maintenance_status, 0, 1000000))
     else:
         total = EquipmentService.get_equipment_count(db)
 
-    items = [EquipmentResponse.model_validate(item) for item in equipment_list]
+    availability = get_equipment_availability(db, [item.id for item in equipment_list])
+    items = []
+    for item in equipment_list:
+        row = EquipmentResponse.model_validate(item).model_dump()
+        row.update(availability.get(item.id, {}))
+        items.append(row)
+
     return {
         "code": 200,
-        "data": {
-            "items": items,
-            "total": total,
-            "skip": skip,
-            "limit": limit,
-        },
+        "data": {"items": items, "total": total, "skip": skip, "limit": limit},
         "message": "获取成功",
     }
 
@@ -91,9 +83,8 @@ async def update_equipment(
     equipment_id: int,
     equipment: EquipmentUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
-    """更新设备"""
     db_equipment = EquipmentService.update_equipment(db, equipment_id, equipment)
     return {"code": 200, "data": db_equipment, "message": "设备更新成功"}
 
@@ -102,8 +93,7 @@ async def update_equipment(
 async def delete_equipment(
     equipment_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
-    """删除设备"""
     result = EquipmentService.delete_equipment(db, equipment_id)
     return {"code": 200, "data": result, "message": result["message"]}
