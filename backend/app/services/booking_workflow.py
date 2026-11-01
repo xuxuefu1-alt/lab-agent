@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Any
@@ -194,6 +195,9 @@ def _to_24_hour(hour: int, meridiem: str | None) -> int:
 
 
 def _parse_time_range(text: str) -> tuple[int, int, int, int] | None:
+    text = unicodedata.normalize("NFKC", text or "").translate(
+        str.maketrans({"–": "-", "—": "-", "−": "-", "－": "-", "〜": "~", "～": "~"})
+    )
     chinese = re.search(
         r"(?:(上午|中午|下午|晚上|凌晨)\s*)?(\d{1,2})(?:点|时)(?:(\d{1,2})\s*分?)?\s*"
         r"(?:到|至|[-~])\s*(?:(上午|中午|下午|晚上|凌晨)\s*)?(\d{1,2})"
@@ -335,31 +339,34 @@ def resolve_booking_request(
     text: str,
     now: datetime | None = None,
     existing_draft: dict[str, Any] | None = None,
-    workflow_active: bool = False,
-    resume_requested: bool = False,
+    extracted_slots: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     existing_draft = existing_draft or {}
+    extracted_slots = extracted_slots or {}
     current_time = now or datetime.now(LOCAL_TZ)
     if current_time.tzinfo is not None:
         current_time = current_time.astimezone(LOCAL_TZ).replace(tzinfo=None)
 
-    laboratory, ambiguous, candidates = _resolve_laboratory(db, text)
-    current_date = _parse_date(text, current_time)
-    current_time_range = _parse_time_range(text)
-    has_slot_signal = bool(
-        laboratory
-        or ambiguous
-        or current_date
-        or current_time_range
-        or any(word in text for word in ("预约", "预订", "改成", "换成"))
-    )
-    if not is_create_booking_intent(text) and not (
-        workflow_active and (has_slot_signal or resume_requested)
-    ):
-        return {"handled": False}
+    laboratory_text = extracted_slots.get("laboratory_text")
+    laboratory, ambiguous, candidates = _resolve_laboratory(db, laboratory_text or text)
+    if laboratory is None and not ambiguous and laboratory_text and laboratory_text != text:
+        laboratory, ambiguous, candidates = _resolve_laboratory(db, text)
 
+    date_text = extracted_slots.get("date_text")
+    time_text = extracted_slots.get("time_text")
+    current_date = _parse_date(date_text or "", current_time) or _parse_date(text, current_time)
+    current_time_range = _parse_time_range(time_text or "") or _parse_time_range(text)
     draft: dict[str, Any] = dict(existing_draft)
+    updated_fields: set[str] = set()
+    if current_date is not None:
+        draft["booking_date"] = current_date.isoformat()
+        updated_fields.add("date")
+    if current_time_range is not None:
+        draft["time_range"] = list(current_time_range)
+        updated_fields.add("time")
     if laboratory is not None:
+        if draft.get("laboratory_id") != laboratory.id:
+            updated_fields.add("laboratory")
         draft.update(
             {
                 "laboratory_id": laboratory.id,
@@ -387,11 +394,18 @@ def resolve_booking_request(
             "draft": draft,
         }
 
+    equipment_text = extracted_slots.get("equipment_text")
     equipment, equipment_ambiguous, equipment_candidates = _resolve_equipment(
         db,
-        text,
+        equipment_text or text,
         draft["laboratory_id"],
     )
+    if equipment is None and not equipment_ambiguous and equipment_text and equipment_text != text:
+        equipment, equipment_ambiguous, equipment_candidates = _resolve_equipment(
+            db,
+            text,
+            draft["laboratory_id"],
+        )
     if equipment_ambiguous:
         candidate_text = "、".join(equipment_candidates[:5])
         return {
@@ -403,6 +417,8 @@ def resolve_booking_request(
             "draft": draft,
         }
     if equipment is not None:
+        if draft.get("equipment_ids") != [equipment.id]:
+            updated_fields.add("equipment")
         draft.update(
             {
                 "equipment_ids": [equipment.id],
@@ -422,7 +438,18 @@ def resolve_booking_request(
         }
 
     booking_date = current_date
+    if booking_date is None and draft.get("booking_date"):
+        try:
+            booking_date = datetime.strptime(draft["booking_date"], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            booking_date = None
     time_range = current_time_range
+    if time_range is None and draft.get("time_range"):
+        try:
+            parsed_range = tuple(int(value) for value in draft["time_range"])
+            time_range = parsed_range if len(parsed_range) == 4 else None
+        except (TypeError, ValueError):
+            time_range = None
     if booking_date is None and draft.get("start_time"):
         try:
             booking_date = datetime.strptime(draft["start_time"], "%Y-%m-%d %H:%M").date()
@@ -521,6 +548,7 @@ def resolve_booking_request(
         "purpose": "实验室/设备预约",
         "student_count": 1,
         "equipment_ids": draft.get("equipment_ids", []),
+        "updated_fields": sorted(updated_fields),
         "draft": {
             **draft,
             "laboratory_id": draft.get("laboratory_id"),

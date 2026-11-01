@@ -1,3 +1,4 @@
+from http import HTTPStatus
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -14,16 +15,20 @@ router = APIRouter(prefix="/files", tags=["files"])
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     if not file.filename:
-        raise BusinessExceptions(message="文件名不能为空")
+        raise BusinessExceptions(message="文件名不能为空", code=HTTPStatus.UNPROCESSABLE_ENTITY)
 
     original_name = os.path.basename(file.filename)
     extension = Path(original_name).suffix.lower()
     if extension not in ALLOWED_FILE:
-        raise BusinessExceptions(message=f"不支持上传{extension}的文件后缀")
+        raise BusinessExceptions(
+            message=f"不支持上传{extension}的文件后缀",
+            code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+        )
 
     if file.size and file.size > MAX_FILE_SIZE:
         raise BusinessExceptions(
-            message=f"文件大小不能超过{MAX_FILE_SIZE // 1024 // 1024}MB"
+            message=f"文件大小不能超过{MAX_FILE_SIZE // 1024 // 1024}MB",
+            code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
         )
 
     stored_name = f"{uuid4().hex}{extension}"
@@ -36,7 +41,8 @@ async def upload_file(file: UploadFile = File(...)):
                 if size > MAX_FILE_SIZE:
                     target.unlink(missing_ok=True)
                     raise BusinessExceptions(
-                        message=f"文件大小不能超过{MAX_FILE_SIZE // 1024 // 1024}MB"
+                        message=f"文件大小不能超过{MAX_FILE_SIZE // 1024 // 1024}MB",
+                        code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                     )
                 output.write(chunk)
     finally:

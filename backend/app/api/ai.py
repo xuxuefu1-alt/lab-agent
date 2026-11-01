@@ -4,7 +4,7 @@ import threading
 from collections.abc import Iterator
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from app.database import get_db
 from app.database import SessionLocal
 from app.schemas.ai import ChatRequest, ChatResponse
 from app.services import ai_services
+from app.observability import REQUEST_ID
 from app.common.respones import Respones
 
 router = APIRouter(prefix="/ai", tags=["AI聊天"])
@@ -23,7 +24,7 @@ def _sse_event(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def _stream_chat_events(data: ChatRequest, user_id: int) -> Iterator[str]:
+def _stream_chat_events(data: ChatRequest, user_id: int, request_id: str | None = None) -> Iterator[str]:
     events: queue.Queue[dict] = queue.Queue()
     finished = threading.Event()
     run_id = uuid4().hex
@@ -32,8 +33,10 @@ def _stream_chat_events(data: ChatRequest, user_id: int) -> Iterator[str]:
         events.put(payload)
 
     def worker() -> None:
-        db = SessionLocal()
+        request_token = REQUEST_ID.set(request_id or run_id)
+        db = None
         try:
+            db = SessionLocal()
             user = db.query(User).filter(User.id == user_id).first()
             if user is None:
                 raise ValueError("当前用户不存在")
@@ -61,8 +64,12 @@ def _stream_chat_events(data: ChatRequest, user_id: int) -> Iterator[str]:
                 "message": getattr(exc, "message", None) or str(exc) or "AI 服务暂时不可用，请稍后重试",
             })
         finally:
-            db.close()
-            finished.set()
+            try:
+                if db is not None:
+                    db.close()
+            finally:
+                REQUEST_ID.reset(request_token)
+                finished.set()
 
     threading.Thread(target=worker, daemon=True).start()
     sequence = 0
@@ -97,10 +104,15 @@ def chat(
 @router.post("/chat/stream")
 def chat_stream(
     data: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
 ):
     return StreamingResponse(
-        _stream_chat_events(data, current_user.id),
+        _stream_chat_events(
+            data,
+            current_user.id,
+            getattr(request.state, "request_id", None),
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

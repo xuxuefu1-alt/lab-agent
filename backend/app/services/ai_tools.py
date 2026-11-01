@@ -41,7 +41,8 @@ class EquipmentToolArgs(BaseModel):
 
 class LaboratoryEquipmentToolArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    keyword: str | None = Field(default=None, max_length=100)
+    laboratory_keyword: str | None = Field(default=None, max_length=100)
+    equipment_keyword: str | None = Field(default=None, max_length=100)
     limit: int = Field(default=20, ge=1, le=50)
 
 
@@ -276,9 +277,30 @@ def _list_laboratory_equipment(
 
 
 def _list_open_laboratories_with_equipment(
-    db: Session, keyword: str | None, limit: int
+    db: Session,
+    laboratory_keyword: str | None,
+    equipment_keyword: str | None,
+    limit: int,
 ) -> dict[str, Any]:
-    laboratories = _active_laboratories(db, keyword, limit)
+    query = db.query(Laboratory).filter(Laboratory.status == 1)
+    if laboratory_keyword:
+        like = f"%{laboratory_keyword}%"
+        query = query.filter((Laboratory.name.like(like)) | (Laboratory.location.like(like)))
+    if equipment_keyword:
+        like = f"%{equipment_keyword}%"
+        matching_laboratory_ids = (
+            db.query(Equipment.laboratory_id)
+            .filter(
+                Equipment.status == 1,
+                Equipment.maintenance_status.in_(NORMAL_MAINTENANCE_STATUSES),
+                (Equipment.name.like(like))
+                | (Equipment.equipment_type.like(like))
+                | (Equipment.model.like(like))
+                | (Equipment.serial_number.like(like)),
+            )
+        )
+        query = query.filter(Laboratory.id.in_(matching_laboratory_ids))
+    laboratories = query.order_by(Laboratory.id).limit(limit).all()
     if not laboratories:
         return {"items": [], "count": 0}
     laboratory_ids = [item.id for item in laboratories]
@@ -289,9 +311,16 @@ def _list_open_laboratories_with_equipment(
             Equipment.status == 1,
             Equipment.maintenance_status.in_(NORMAL_MAINTENANCE_STATUSES),
         )
-        .order_by(Equipment.id)
-        .all()
     )
+    if equipment_keyword:
+        like = f"%{equipment_keyword}%"
+        equipment_rows = equipment_rows.filter(
+            (Equipment.name.like(like))
+            | (Equipment.equipment_type.like(like))
+            | (Equipment.model.like(like))
+            | (Equipment.serial_number.like(like))
+        )
+    equipment_rows = equipment_rows.order_by(Equipment.id).all()
     by_laboratory: dict[int, list[dict[str, Any]]] = {item.id: [] for item in laboratories}
     for equipment in equipment_rows:
         by_laboratory[equipment.laboratory_id].append(_equipment_item(equipment))
@@ -419,12 +448,21 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
-    def list_open_laboratories_with_equipment(keyword: str | None = None, limit: int = 20) -> str:
+    def list_open_laboratories_with_equipment(
+        laboratory_keyword: str | None = None,
+        equipment_keyword: str | None = None,
+        limit: int = 20,
+    ) -> str:
         if not account_is_enabled():
             return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
         try:
             return json.dumps(
-                {"ok": True, "data": _list_open_laboratories_with_equipment(db, keyword, limit)},
+                {
+                    "ok": True,
+                    "data": _list_open_laboratories_with_equipment(
+                        db, laboratory_keyword, equipment_keyword, limit
+                    ),
+                },
                 ensure_ascii=False,
             )
         except Exception as exc:

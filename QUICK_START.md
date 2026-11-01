@@ -13,6 +13,17 @@ lag-agent/
 
 ## 🔧 后端启动 (Python)
 
+### 前置步骤：启动必需的 Redis Stack
+后端启动时会初始化 LangGraph Redis 检查点索引。开发环境和生产环境都必须使用 Redis Stack；Redis 未就绪时，后端会快速失败，不会切换为内存检查点。
+
+请先在项目根目录启动 Redis：
+```bash
+docker compose -f ops/observability/docker-compose.yml up -d redis
+docker compose -f ops/observability/docker-compose.yml ps redis
+```
+
+确认 Redis 容器状态为 `healthy` 后，再按下面步骤启动后端。
+
 ### 1. 进入后端目录
 ```bash
 cd backend

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     AI_CONTEXT_TOKEN_BUDGET: int = 4000
     AI_CONTEXT_SUMMARY_TRIGGER_MESSAGES: int = 12
     AI_CONTEXT_SUMMARY_CHAR_BUDGET: int = 2400
+    AI_INTENT_ROUTER_TIMEOUT_SECONDS: int = 10
     OTEL_SERVICE_NAME: str = "lab-agent-backend"
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     model_config = SettingsConfigDict(

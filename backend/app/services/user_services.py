@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from sqlalchemy.orm import Session
 
 from app.model.user import User
@@ -29,7 +31,7 @@ class UserService:
         """根据ID获取用户"""
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
-            raise BusinessExceptions("用户不存在")
+            raise BusinessExceptions("用户不存在", code=HTTPStatus.NOT_FOUND)
         return user
 
     @staticmethod
@@ -47,7 +49,7 @@ class UserService:
         """根据用户名获取用户"""
         user = db.query(User).filter(User.username == username).first()
         if not user:
-            raise BusinessExceptions("用户不存在")
+            raise BusinessExceptions("用户不存在", code=HTTPStatus.NOT_FOUND)
         return user
 
     @staticmethod
@@ -57,7 +59,7 @@ class UserService:
 
         # 验证旧密码
         if not verify_password(old_password, user.password):
-            raise BusinessExceptions("原密码错误")
+            raise BusinessExceptions("原密码错误", code=HTTPStatus.UNPROCESSABLE_ENTITY)
 
         # 更新密码
         user.password = hash_password(new_password)
@@ -106,7 +108,7 @@ class UserService:
         # 检查用户名是否已存在
         existing_user = db.query(User).filter(User.username == username).first()
         if existing_user:
-            raise BusinessExceptions("用户名已存在")
+            raise BusinessExceptions("用户名已存在", code=HTTPStatus.CONFLICT)
 
         user = User(
             username=username,

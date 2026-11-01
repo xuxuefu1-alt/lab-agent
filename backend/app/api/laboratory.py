@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.common.respones import success_response
 from app.database import get_db
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, require_admin
 from app.schemas.laboratory import LaboratoryCreate, LaboratoryResponse, LaboratoryUpdate
 from app.services.laboratory_services import LaboratoryService
 from app.services.resource_availability import get_laboratory_availability
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/laboratories", tags=["laboratories"])
 async def create_laboratory(
     laboratory: LaboratoryCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
 ):
     db_laboratory = LaboratoryService.create_laboratory(db, laboratory)
     return {"code": 200, "data": db_laboratory, "message": "实验室创建成功"}
@@ -67,7 +67,7 @@ async def update_laboratory(
     laboratory_id: int,
     laboratory: LaboratoryUpdate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
 ):
     db_laboratory = LaboratoryService.update_laboratory(db, laboratory_id, laboratory)
     return {"code": 200, "data": db_laboratory, "message": "实验室更新成功"}
@@ -77,7 +77,7 @@ async def update_laboratory(
 async def delete_laboratory(
     laboratory_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
 ):
     result = LaboratoryService.delete_laboratory(db, laboratory_id)
     return {"code": 200, "data": result, "message": result["message"]}

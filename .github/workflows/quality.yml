@@ -1,0 +1,86 @@
+name: Quality gates
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      APP_ENV: test
+      mysql_url: sqlite:///./ci-test.db
+      JWT_SECRT_KEY: ci-only-secret
+      JWT_ALGORITHM: HS256
+      LLM_API_KEY: ci-only-key
+      LLM_BASE_URL: http://127.0.0.1:9/v1
+      LLM_MODEL: ci-only-model
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run backend unit tests
+        run: python -m unittest discover -s . -p "test_*.py" -v
+      - name: Run agent quality tests
+        run: python -m unittest discover -s quality -p "test_*.py" -v
+      - name: Compile backend application
+        run: python -m compileall -q app
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: fronted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: fronted/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  repository:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check patch whitespace
+        run: git diff --check
+
+  observability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Prometheus alert rules
+        run: |
+          docker run --rm \
+            --entrypoint=promtool \
+            -v "$PWD/ops/observability/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.5.0 \
+            check rules /etc/prometheus/alerts.yml
+          docker run --rm \
+            --entrypoint=promtool \
+            -v "$PWD/ops/observability/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.5.0 \
+            test rules /etc/prometheus/alerts_test.yml

@@ -1,3 +1,4 @@
+from http import HTTPStatus
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -28,36 +29,49 @@ class BookingService:
         try:
             return datetime.strptime(value, "%Y-%m-%d %H:%M")
         except (TypeError, ValueError) as exc:
-            raise BusinessExceptions("时间格式不正确，请使用 YYYY-MM-DD HH:mm 格式。") from exc
+            raise BusinessExceptions(
+                "时间格式不正确，请使用 YYYY-MM-DD HH:mm 格式。",
+                code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            ) from exc
 
     @staticmethod
     def _validate_resources(db: Session, laboratory_id: int, equipment_ids: list[int]) -> list[int]:
         laboratory = db.query(Laboratory).filter(
             Laboratory.id == laboratory_id,
-            Laboratory.status == 1,
         ).first()
         if laboratory is None:
-            raise BusinessExceptions("所选实验室当前不可预约。")
+            raise BusinessExceptions("所选实验室不存在。", code=HTTPStatus.NOT_FOUND)
+        if laboratory.status != 1:
+            raise BusinessExceptions("所选实验室当前不可预约。", code=HTTPStatus.CONFLICT)
 
         normalized_ids = list(dict.fromkeys(equipment_ids or []))
         if len(normalized_ids) > 20:
-            raise BusinessExceptions("最多只能选择 20 件设备。")
+            raise BusinessExceptions(
+                "最多只能选择 20 件设备。",
+                code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            )
         if not normalized_ids:
             return []
 
         equipment_rows = db.query(Equipment).filter(Equipment.id.in_(normalized_ids)).all()
         by_id = {row.id: row for row in equipment_rows}
         if any(item_id not in by_id for item_id in normalized_ids):
-            raise BusinessExceptions("所选设备不存在。")
+            raise BusinessExceptions("所选设备不存在。", code=HTTPStatus.NOT_FOUND)
 
         for item_id in normalized_ids:
             equipment = by_id[item_id]
             if equipment.laboratory_id != laboratory_id:
-                raise BusinessExceptions("所选设备不属于当前实验室。")
+                raise BusinessExceptions(
+                    "所选设备不属于当前实验室。",
+                    code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                )
             if equipment.status != 1:
-                raise BusinessExceptions("所选设备已停用。")
+                raise BusinessExceptions("所选设备已停用。", code=HTTPStatus.CONFLICT)
             if equipment.maintenance_status not in NORMAL_MAINTENANCE_STATUSES:
-                raise BusinessExceptions("所选设备当前不可预约，可能处于维护状态。")
+                raise BusinessExceptions(
+                    "所选设备当前不可预约，可能处于维护状态。",
+                    code=HTTPStatus.CONFLICT,
+                )
         return normalized_ids
 
     @staticmethod
@@ -79,7 +93,10 @@ class BookingService:
             existing_start = BookingService._parse_time(existing.start_time)
             existing_end = BookingService._parse_time(existing.end_time)
             if existing_start < end and existing_end > start:
-                raise BusinessExceptions("所选实验室在该时间段已被预约，请更换时间。")
+                raise BusinessExceptions(
+                    "所选实验室在该时间段已被预约，请更换时间。",
+                    code=HTTPStatus.CONFLICT,
+                )
 
         if not equipment_ids:
             return
@@ -97,7 +114,10 @@ class BookingService:
             existing_start = BookingService._parse_time(existing.start_time)
             existing_end = BookingService._parse_time(existing.end_time)
             if existing_start < end and existing_end > start:
-                raise BusinessExceptions("所选设备中有一件或多件在该时间段已被预约，请更换时间或设备。")
+                raise BusinessExceptions(
+                    "所选设备中有一件或多件在该时间段已被预约，请更换时间或设备。",
+                    code=HTTPStatus.CONFLICT,
+                )
 
     @staticmethod
     def _replace_equipment_links(db: Session, booking: Booking, equipment_ids: list[int]) -> None:
@@ -112,10 +132,14 @@ class BookingService:
         start = BookingService._parse_time(booking.start_time)
         end = BookingService._parse_time(booking.end_time)
         if start >= end:
-            raise BusinessExceptions("结束时间必须晚于开始时间。")
+            raise BusinessExceptions(
+                "结束时间必须晚于开始时间。",
+                code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            )
         if not is_standard_booking_slot((start.hour, start.minute, end.hour, end.minute)):
             raise BusinessExceptions(
-                f"该时间段不属于可预约时段，请选择：{format_standard_booking_slots()}。"
+                f"该时间段不属于可预约时段，请选择：{format_standard_booking_slots()}。",
+                code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
 
         # Serialize booking checks for the same laboratory.
@@ -123,13 +147,14 @@ class BookingService:
             db.query(Laboratory)
             .filter(
                 Laboratory.id == booking.laboratory_id,
-                Laboratory.status == 1,
             )
             .with_for_update()
             .first()
         )
         if locked_laboratory is None:
-            raise BusinessExceptions("所选实验室当前不可预约。")
+            raise BusinessExceptions("所选实验室不存在。", code=HTTPStatus.NOT_FOUND)
+        if locked_laboratory.status != 1:
+            raise BusinessExceptions("所选实验室当前不可预约。", code=HTTPStatus.CONFLICT)
 
         equipment_ids = BookingService._validate_resources(db, booking.laboratory_id, booking.equipment_ids)
         BookingService._ensure_no_conflict(db, booking.laboratory_id, equipment_ids, start, end)
@@ -155,7 +180,7 @@ class BookingService:
     def get_booking_by_id(db: Session, booking_id: int) -> Booking:
         booking = db.query(Booking).filter(Booking.id == booking_id).first()
         if not booking:
-            raise BusinessExceptions("未找到对应预约。")
+            raise BusinessExceptions("未找到对应预约。", code=HTTPStatus.NOT_FOUND)
         return booking
 
     @staticmethod
@@ -218,7 +243,10 @@ class BookingService:
     def update_booking(db: Session, booking_id: int, booking: BookingUpdate) -> Booking:
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         if db_booking.status != PENDING:
-            raise BusinessExceptions("只有待审核状态的预约可以修改。")
+            raise BusinessExceptions(
+                "只有待审核状态的预约可以修改。",
+                code=HTTPStatus.CONFLICT,
+            )
 
         update_data = booking.model_dump(exclude_unset=True)
         next_laboratory_id = update_data.pop("laboratory_id", db_booking.laboratory_id)
@@ -227,10 +255,14 @@ class BookingService:
         start = BookingService._parse_time(next_start)
         end = BookingService._parse_time(next_end)
         if start >= end:
-            raise BusinessExceptions("结束时间必须晚于开始时间。")
+            raise BusinessExceptions(
+                "结束时间必须晚于开始时间。",
+                code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            )
         if not is_standard_booking_slot((start.hour, start.minute, end.hour, end.minute)):
             raise BusinessExceptions(
-                f"该时间段不属于可预约时段，请选择：{format_standard_booking_slots()}。"
+                f"该时间段不属于可预约时段，请选择：{format_standard_booking_slots()}。",
+                code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
 
         equipment_was_sent = "equipment_ids" in update_data
@@ -256,9 +288,12 @@ class BookingService:
     def approve_booking(db: Session, booking_id: int, approve_data: BookingApprove, approved_by: int) -> Booking:
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         if db_booking.status != PENDING:
-            raise BusinessExceptions("只有待审核状态的预约可以审批。")
+            raise BusinessExceptions(
+                "只有待审核状态的预约可以审批。",
+                code=HTTPStatus.CONFLICT,
+            )
         if approve_data.status not in [APPROVED, REJECTED]:
-            raise BusinessExceptions("审批状态不正确。")
+            raise BusinessExceptions("审批状态不正确。", code=HTTPStatus.UNPROCESSABLE_ENTITY)
         db_booking.status = approve_data.status
         db_booking.reject_reason = approve_data.reject_reason
         db_booking.remarks = approve_data.remarks
@@ -283,11 +318,11 @@ class BookingService:
             .first()
         )
         if db_booking is None:
-            raise BusinessExceptions("未找到对应预约。")
+            raise BusinessExceptions("未找到对应预约。", code=HTTPStatus.NOT_FOUND)
         if actor_user_id is not None and db_booking.user_id != actor_user_id and actor_role != "admin":
-            raise BusinessExceptions("你只能取消自己的预约。")
+            raise BusinessExceptions("你只能取消自己的预约。", code=HTTPStatus.FORBIDDEN)
         if db_booking.status in [REJECTED, CANCELLED]:
-            raise BusinessExceptions("这条预约当前不可取消。")
+            raise BusinessExceptions("这条预约当前不可取消。", code=HTTPStatus.CONFLICT)
         db_booking.status = CANCELLED
         db.add(db_booking)
         db.commit()

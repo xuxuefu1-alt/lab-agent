@@ -29,6 +29,11 @@ test-results/
 
 # Local regression tests are kept outside the release repository
 backend/test_*.py
+!backend/test_agent_architecture.py
+!backend/test_booking_workflow.py
+!backend/test_confirmation_contract.py
+!backend/test_api_error_contract.py
+!backend/test_resource_admin_authorization.py
 tests/
 **/tests/
 *.test.js

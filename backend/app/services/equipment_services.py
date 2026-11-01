@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from sqlalchemy.orm import Session
 from app.model.equipment import Equipment
 from app.schemas.equipment import EquipmentCreate, EquipmentUpdate
@@ -14,7 +16,7 @@ class EquipmentService:
                 Equipment.serial_number == equipment.serial_number
             ).first()
             if existing:
-                raise BusinessExceptions("序列号已存在")
+                raise BusinessExceptions("序列号已存在", code=HTTPStatus.CONFLICT)
 
         db_equipment = Equipment(
             name=equipment.name,
@@ -37,7 +39,7 @@ class EquipmentService:
         """根据ID获取设备"""
         equipment = db.query(Equipment).filter(Equipment.id == equipment_id).first()
         if not equipment:
-            raise BusinessExceptions("设备不存在")
+            raise BusinessExceptions("设备不存在", code=HTTPStatus.NOT_FOUND)
         return equipment
 
     @staticmethod
@@ -63,7 +65,7 @@ class EquipmentService:
                 Equipment.serial_number == equipment.serial_number
             ).first()
             if existing:
-                raise BusinessExceptions("序列号已存在")
+                raise BusinessExceptions("序列号已存在", code=HTTPStatus.CONFLICT)
 
         update_data = equipment.model_dump(exclude_unset=True)
         for field, value in update_data.items():

@@ -17,6 +17,7 @@ from app.model.user import User
 logger = logging.getLogger(__name__)
 WORKFLOW_STATE_SCHEMA_VERSION = 2
 WORKFLOW_POLICY_VERSION = "booking-policy-v2"
+WORKFLOW_MAX_RETRIES = 2
 
 
 def _redis_client():
@@ -215,6 +216,8 @@ def save_workflow_state(
     normalized_state.setdefault("workflow_type", workflow_type)
     normalized_state.setdefault("policy_version", WORKFLOW_POLICY_VERSION)
     normalized_state.setdefault("status", status)
+    normalized_state.setdefault("retry_count", 0)
+    normalized_state.setdefault("max_retries", WORKFLOW_MAX_RETRIES)
     normalized_state.setdefault("updated_at", now.isoformat())
     normalized_state.setdefault("phase", _workflow_phase(workflow_type, normalized_state, status))
     normalized_state.setdefault("completion", _workflow_completion(normalized_state))
@@ -250,6 +253,37 @@ def save_workflow_state(
     return workflow
 
 
+def record_workflow_failure(
+    db: Session,
+    workflow: AiWorkflowState,
+    error_code: str,
+    retryable: bool,
+) -> bool:
+    """Record one workflow failure and return whether another retry is allowed."""
+    try:
+        payload = json.loads(workflow.state_json)
+    except (TypeError, json.JSONDecodeError):
+        payload = {}
+    retry_count = int(payload.get("retry_count", 0)) + 1
+    max_retries = int(payload.get("max_retries", WORKFLOW_MAX_RETRIES))
+    payload.update({
+        "retry_count": retry_count,
+        "max_retries": max_retries,
+        "last_error_code": error_code,
+        "last_error_retryable": bool(retryable),
+        "updated_at": datetime.now().isoformat(),
+    })
+    allowed = bool(retryable and retry_count <= max_retries)
+    if not allowed:
+        workflow.status = "failed"
+        payload["phase"] = "failed"
+    workflow.state_json = json.dumps(payload, ensure_ascii=False)
+    workflow.version += 1
+    db.add(workflow)
+    db.commit()
+    return allowed
+
+
 def _workflow_phase(workflow_type: str, state: dict[str, Any], status: str) -> str:
     if status in {"expired", "consumed", "reset", "deleted"}:
         return status
@@ -262,11 +296,15 @@ def _workflow_phase(workflow_type: str, state: dict[str, Any], status: str) -> s
 
 def _workflow_completion(state: dict[str, Any]) -> dict[str, bool]:
     booking = state.get("booking") or state.get("draft") or {}
+    time_range = booking.get("time_range")
     return {
         "laboratory": bool(booking.get("laboratory_id")),
         "equipment": bool(booking.get("equipment_ids")),
-        "date": bool(booking.get("start_time")),
-        "time": bool(booking.get("start_time") and booking.get("end_time")),
+        "date": bool(booking.get("booking_date") or booking.get("start_time")),
+        "time": bool(
+            (isinstance(time_range, (list, tuple)) and len(time_range) == 4)
+            or (booking.get("start_time") and booking.get("end_time"))
+        ),
         "purpose": bool(booking.get("purpose")),
         "student_count": bool(booking.get("student_count")),
     }

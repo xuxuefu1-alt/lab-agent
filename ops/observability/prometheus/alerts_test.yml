@@ -1,0 +1,68 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="backend",instance="backend:8000"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: BackendScrapeMissing
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: BackendScrapeMissing
+        exp_alerts:
+          - exp_labels:
+              job: backend
+              instance: backend:8000
+              severity: critical
+            exp_annotations:
+              summary: Lab Agent backend metrics endpoint is unavailable
+              description: Prometheus has failed to scrape the backend for at least two minutes.
+
+  - interval: 1m
+    input_series:
+      - series: 'lab_agent_http_requests_total{job="backend",status="500"}'
+        values: '0+4x20'
+      - series: 'lab_agent_http_requests_total{job="backend",status="200"}'
+        values: '0+16x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: BackendHigh5xxRate
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: BackendHigh5xxRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Lab Agent backend 5xx rate is elevated
+              description: More than 5% of backend requests have returned 5xx responses for five minutes.
+
+  - interval: 1m
+    input_series:
+      - series: 'lab_agent_http_request_duration_seconds_bucket{job="backend",le="0.5"}'
+        values: '0+0x20'
+      - series: 'lab_agent_http_request_duration_seconds_bucket{job="backend",le="1"}'
+        values: '0+0x20'
+      - series: 'lab_agent_http_request_duration_seconds_bucket{job="backend",le="2"}'
+        values: '0+0x20'
+      - series: 'lab_agent_http_request_duration_seconds_bucket{job="backend",le="4"}'
+        values: '0+100x20'
+      - series: 'lab_agent_http_request_duration_seconds_bucket{job="backend",le="+Inf"}'
+        values: '0+100x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BackendHighP95Latency
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: BackendHighP95Latency
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Lab Agent backend p95 latency is high
+              description: Backend request p95 latency has exceeded two seconds for ten minutes.

@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from sqlalchemy.orm import Session
 from app.model.laboratory import Laboratory
 from app.schemas.laboratory import LaboratoryCreate, LaboratoryUpdate
@@ -36,7 +38,7 @@ class LaboratoryService:
         """根据ID获取实验室"""
         laboratory = db.query(Laboratory).filter(Laboratory.id == laboratory_id).first()
         if not laboratory:
-            raise BusinessExceptions("实验室不存在")
+            raise BusinessExceptions("实验室不存在", code=HTTPStatus.NOT_FOUND)
         return laboratory
 
     @staticmethod

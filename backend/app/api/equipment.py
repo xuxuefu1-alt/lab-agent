@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.common.respones import success_response
 from app.database import get_db
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, require_admin
 from app.model.laboratory import Laboratory
 from app.schemas.equipment import EquipmentCreate, EquipmentResponse, EquipmentUpdate
 from app.services.equipment_services import EquipmentService
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/equipment", tags=["equipment"])
 async def create_equipment(
     equipment: EquipmentCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
 ):
     db_equipment = EquipmentService.create_equipment(db, equipment)
     return {"code": 200, "data": db_equipment, "message": "设备创建成功"}
@@ -99,7 +99,7 @@ async def update_equipment(
     equipment_id: int,
     equipment: EquipmentUpdate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
 ):
     db_equipment = EquipmentService.update_equipment(db, equipment_id, equipment)
     return {"code": 200, "data": db_equipment, "message": "设备更新成功"}
@@ -109,7 +109,7 @@ async def update_equipment(
 async def delete_equipment(
     equipment_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
 ):
     result = EquipmentService.delete_equipment(db, equipment_id)
     return {"code": 200, "data": result, "message": result["message"]}

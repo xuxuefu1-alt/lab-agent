@@ -6,13 +6,16 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
+from app.observability import invoke_tool
 from app.model.user import User
 from app.services.ai_tools import build_tools
-from app.services.booking_workflow import is_booking_resume_intent, resolve_booking_request
+from app.services.booking_workflow import resolve_booking_request
 
 
 class BookingGraphState(TypedDict, total=False):
     question: str
+    intent: str
+    intent_slots: dict[str, Any]
     booking_draft: dict[str, Any]
     phase: str
     missing_fields: list[str]
@@ -22,14 +25,20 @@ class BookingGraphState(TypedDict, total=False):
 
 def build_booking_graph(db: Session, current_user: User, checkpointer):
     def resolve_and_prepare(state: BookingGraphState) -> dict[str, Any]:
+        if state.get("intent") not in {"booking_create", "booking_resume"}:
+            return {
+                "phase": "idle",
+                "missing_fields": [],
+                "schema_version": 2,
+                "result": {"handled": False},
+            }
         question = state.get("question", "")
         draft = state.get("booking_draft") or {}
         resolution = resolve_booking_request(
             db,
             question,
             existing_draft=draft,
-            workflow_active=True,
-            resume_requested=is_booking_resume_intent(question),
+            extracted_slots=state.get("intent_slots") or {},
         )
         next_draft = resolution.get("draft") or draft
         if not resolution.get("handled"):
@@ -57,10 +66,27 @@ def build_booking_graph(db: Session, current_user: User, checkpointer):
                 },
             }
 
+        if state.get("intent") == "booking_resume" and not resolution.get("updated_fields"):
+            return {
+                "booking_draft": next_draft,
+                "phase": "slot_validation_failed",
+                "missing_fields": [],
+                "schema_version": 2,
+                "result": {
+                    "handled": True,
+                    "content": "预约信息已收集完整，但本轮没有提供新的日期或时间。请重新明确需要预约的日期和时间段。",
+                    "tool_calls": [],
+                    "blocks": [],
+                    "confirmation_token": None,
+                    "reason": "resume_without_slot_update",
+                },
+            }
+
         prepare_tool = next(
             tool for tool in build_tools(db, current_user) if tool.name == "prepare_create_booking"
         )
-        raw_result = prepare_tool.invoke(
+        raw_result = invoke_tool(
+            prepare_tool,
             {
                 "laboratory_id": resolution["laboratory_id"],
                 "equipment_ids": resolution["equipment_ids"],
@@ -74,6 +100,9 @@ def build_booking_graph(db: Session, current_user: User, checkpointer):
         if not tool_result.get("ok"):
             return {
                 "booking_draft": next_draft,
+                "phase": "slot_validation_failed",
+                "missing_fields": [],
+                "schema_version": 2,
                 "result": {
                     "handled": True,
                     "content": tool_result.get("error") or "当前时间段暂不可预约，请换一个时间段。",

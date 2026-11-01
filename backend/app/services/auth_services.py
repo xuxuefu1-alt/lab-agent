@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from sqlalchemy.orm import Session
 from app.schemas.auth import LoginRequest, registerRquest
 from app.model.user import User
@@ -11,12 +13,12 @@ from app.schemas.user import UserResponse
 def login(db: Session, data: LoginRequest):
     user = db.query(User).filter(User.username == data.username).first()
     if not user:
-        raise BusinessExceptions(message="账号不存在")
+        raise BusinessExceptions(message="账号不存在", code=HTTPStatus.UNAUTHORIZED)
     # 验证密码跟密文
     if not verify_password(data.password, user.password):
-        raise BusinessExceptions(message="密码错误")
+        raise BusinessExceptions(message="密码错误", code=HTTPStatus.UNAUTHORIZED)
     if user.status != 1:
-        raise BusinessExceptions(message="账号已经禁用")
+        raise BusinessExceptions(message="账号已经禁用", code=HTTPStatus.FORBIDDEN)
     # 账号密码通过 创建token
     token = create_access_token(user.id)
     # 登录成功 返回对应用户数据 状态码
@@ -26,7 +28,7 @@ def login(db: Session, data: LoginRequest):
 def register(db: Session, data: registerRquest):
     user = db.query(User).filter(User.username == data.username).first()
     if user:
-        raise BusinessExceptions(message="该账户已经存在")
+        raise BusinessExceptions(message="该账户已经存在", code=HTTPStatus.CONFLICT)
     # 注册成功 存入数据库 更新数据库
     user_model = User(
         username=data.username,
