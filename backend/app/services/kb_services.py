@@ -1,14 +1,16 @@
 import chromadb
 import os
-from app.config import BASE_DIR
+from pathlib import Path
+from app.config import BASE_DIR, settings
 from chromadb.api.models.Collection import Collection
 from chromadb.utils import embedding_functions
 
 # 定义kb chorma 文件路径
 
 KB_DIR = BASE_DIR / "data" / "kb"
-CHROMA_DIR = BASE_DIR / "data" / "chroma"
-MODEL_CACHE_DIR = BASE_DIR / "data" / "models"  # 本地模型缓存目录
+AI_DATA_DIR = Path(settings.AI_DATA_DIR)
+CHROMA_DIR = AI_DATA_DIR / "chroma"
+MODEL_CACHE_DIR = AI_DATA_DIR / "models"
 
 # 设置 HuggingFace 缓存目录，避免每次都重新下载
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))

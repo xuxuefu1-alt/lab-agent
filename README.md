@@ -6,13 +6,14 @@
 
 ### 方式一：本地开发（推荐）
 
-后端默认使用 SQLite，Redis 可选；没有模型密钥时，健康检查和普通业务接口仍可启动，调用 AI 时会返回明确的配置提示。
+本地和在线环境都以 MySQL 为业务数据库。自动化测试可显式使用 SQLite 隔离测试数据；生产模式会拒绝 SQLite，并要求外部 MySQL 与 Redis Stack。
 
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-$env:mysql_url = "sqlite:///./lab_agent.db"
+$env:mysql_url = "mysql+pymysql://lab_agent:lab_agent_demo@127.0.0.1:3306/lab_agent"
 $env:REDIS_URL = "redis://:lag-dev-redis@127.0.0.1:6379/0"
+docker compose -f ..\docker-compose.demo.yml up -d mysql redis
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -80,7 +81,7 @@ GitHub Actions 会在 `master`、`main`、`develop` 分支执行后端测试和�
 
 ## Render 在线体验
 
-仓库根目录提供 `render.yaml`，导入 GitHub 仓库后可创建后端 Web Service 和前端 Static Site。Demo 后端默认使用 SQLite 和内存 Checkpoint，不要求额外购买数据库或 Redis；只需在 Render Secret 中配置 `LLM_API_KEY`，并将前端 `VITE_API_BASE_URL` 指向后端域名加 `/api`。
+仓库根目录提供 `render.yaml`，导入 GitHub 仓库后创建常驻后端和前端 Static Site。后端使用外部持久化 MySQL、Redis Stack，并把 Chroma 向量索引、模型缓存和上传文件存放在 Render 持久磁盘。需要配置 `mysql_url`、`REDIS_URL`、`LLM_API_KEY`、`CORS_ORIGINS` 和前端 `VITE_API_BASE_URL`。Render 后端和持久磁盘为付费资源；不要把本机 `127.0.0.1` 数据库或 Redis 地址填入云端配置。
 
 详细步骤见 [`docs/开源部署与在线体验指南.md`](docs/开源部署与在线体验指南.md)。
 
@@ -88,4 +89,4 @@ GitHub Actions 会在 `master`、`main`、`develop` 分支执行后端测试和�
 
 - 不提交 `.env`、模型密钥、JWT 密钥、数据库密码和真实业务数据。
 - 生产环境必须替换 JWT 密钥，并使用外部 MySQL/PostgreSQL 与 Redis Stack。
-- Demo 数据与生产数据隔离，Render 免费实例可能休眠。
+- 生产部署使用托管数据库与 Redis Stack；本地 Docker Compose 仅用于开发环境复现。

@@ -9,7 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     """集中管理服务配置，并为本地 Demo 提供可运行的默认值。"""
 
-    mysql_url: str = "sqlite:///./lab_agent.db"
+    mysql_url: str
     APP_ENV: str = "development"
     JWT_SECRT_KEY: str = "dev-only-change-me"
     JWT_EXPIRE_HOURS: int = 24
@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     OTEL_SERVICE_NAME: str = "lab-agent-backend"
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    AI_DATA_DIR: str = str(BASE_DIR / "data")
+    UPLOAD_DIR: str = str(BASE_DIR / "uploads")
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
@@ -37,8 +39,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+if settings.APP_ENV == "production":
+    if not settings.mysql_url.startswith("mysql"):
+        raise RuntimeError("Production requires mysql_url to point to MySQL")
+    if not settings.REDIS_URL:
+        raise RuntimeError("Production requires REDIS_URL for LangGraph checkpoints")
 
-UPLOAD_DIR = BASE_DIR / "uploads"
+UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_FILE_SIZE = 100 * 1024 * 1024
 ALLOWED_FILE = [

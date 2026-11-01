@@ -2,16 +2,26 @@ services:
   - type: web
     name: lab-agent-backend
     runtime: python
-    plan: free
+    plan: 1c-2g
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
+    disk:
+      name: lab-agent-data
+      mountPath: /var/data
+      sizeGB: 5
     envVars:
       - key: APP_ENV
-        value: demo
+        value: production
       - key: mysql_url
-        value: sqlite:///./lab_agent.db
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: AI_DATA_DIR
+        value: /var/data
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
       - key: JWT_SECRT_KEY
         generateValue: true
       - key: JWT_EXPIRE_HOURS
