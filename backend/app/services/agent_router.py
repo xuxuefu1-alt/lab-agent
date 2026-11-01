@@ -35,6 +35,7 @@ class AgentIntent(StrEnum):
     RESOURCE_QUERY = "resource_query"
     AVAILABILITY_QUERY = "availability_query"
     ADMIN_BOOKING_QUERY = "admin_booking_query"
+    USER_QUERY = "user_query"
     BOOKING_QUERY = "booking_query"
     BOOKING_CREATE = "booking_create"
     CANCEL_BOOKING = "cancel_booking"
@@ -150,6 +151,15 @@ slots 只能包含 laboratory_text、equipment_text、date_text、time_text、bo
 对否定、拒绝、假设语气如“我不想取消”“如果取消会怎样”要准确区分 speech_act，并且不能分类成可执行的创建或取消动作。
 不要输出置信度或解释文本。"""
 
+
+# 补充用户查询意图，避免用户列表请求落入预约查询分支。
+ROUTER_SYSTEM_PROMPT += """
+
+补充意图：user_query。
+user_query 仅用于查询用户列表、用户数量、用户角色、用户状态或按姓名/用户名搜索用户，例如“目前有哪些用户”“查看用户列表”“有哪些管理员”。
+admin_booking_query 只能用于查询预约业务，必须出现预约、预订、待审批预约、待审核预约或其他用户预约等预约语义；仅出现“用户”而没有预约语义时，不能返回 admin_booking_query。
+user_query 的权限由服务端校验，不能因为当前用户是否为管理员而改变意图。
+"""
 
 @lru_cache(maxsize=1)
 # 负责 router model 相关逻辑，并返回处理结果。
@@ -415,6 +425,25 @@ def interpret_turn(
             fallback_reason="empty_message",
         )
 
+    if not active_workflow and _normalize_control_utterance(message) in {
+        "你好",
+        "您好",
+        "嗨",
+        "hello",
+        "hi",
+        "hey",
+        "谢谢",
+        "谢谢你",
+        "再见",
+        "拜拜",
+    }:
+        return RouteDecision(
+            intent=AgentIntent.GENERAL,
+            deterministic=True,
+            speech_act=SpeechAct.STATEMENT,
+            route_source="deterministic_fast_general",
+        )
+
     workflow_phase = (active_workflow or {}).get("phase")
     if workflow_phase == "pending_confirmation" and is_explicit_booking_rejection(message):
         return RouteDecision(
@@ -448,6 +477,14 @@ def interpret_turn(
                 speech_act=SpeechAct.NEGATED,
                 clarification_question="好的，我不会发起预约或取消操作。",
             )
+
+    if is_user_query_request(message):
+        return RouteDecision(
+            intent=AgentIntent.USER_QUERY,
+            deterministic=True,
+            speech_act=SpeechAct.QUERY,
+            route_source="deterministic_user_query",
+        )
 
     deterministic_multi_intent = _deterministic_multi_intent_route(
         message,
@@ -601,6 +638,8 @@ def is_cancel_booking_request(text: str) -> bool:
 # 判断admin booking query request相关数据或业务逻辑。
 def is_admin_booking_query_request(text: str) -> bool:
     normalized = re.sub(r"\s+", "", text or "").casefold()
+    if not any(term in normalized for term in ("预约", "预订")):
+        return False
     return any(
         phrase in normalized
         for phrase in (
@@ -617,6 +656,33 @@ def is_admin_booking_query_request(text: str) -> bool:
     )
 
 
+def is_user_query_request(text: str) -> bool:
+    """识别用户列表和用户信息查询，避免误入预约查询分支。"""
+    normalized = re.sub(r"\s+", "", text or "").casefold()
+    if not normalized or any(term in normalized for term in ("预约", "预订", "待审批", "待审核")):
+        return False
+    return any(
+        phrase in normalized
+        for phrase in (
+            "有哪些用户",
+            "目前有哪些用户",
+            "当前有哪些用户",
+            "用户列表",
+            "所有用户",
+            "全部用户",
+            "查询用户",
+            "查看用户",
+            "显示用户",
+            "列出用户",
+            "有多少用户",
+            "有哪些管理员",
+            "管理员列表",
+            "有哪些学生",
+            "学生列表",
+        )
+    )
+
+
 def route_request(
     text: str,
     workflow_active: bool = False,
@@ -626,6 +692,8 @@ def route_request(
     normalized = (text or "").strip()
     if is_cancel_booking_request(normalized):
         return RouteDecision(AgentIntent.CANCEL_BOOKING, True, speech_act=SpeechAct.REQUEST_ACTION)
+    if is_user_query_request(normalized):
+        return RouteDecision(AgentIntent.USER_QUERY, True, speech_act=SpeechAct.QUERY)
     if is_admin_booking_query_request(normalized):
         return RouteDecision(
             AgentIntent.ADMIN_BOOKING_QUERY,

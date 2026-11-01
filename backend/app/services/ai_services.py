@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+from functools import lru_cache
 from http import HTTPStatus
 from datetime import datetime
 from dataclasses import replace
@@ -49,6 +50,19 @@ from app.services.agent_plan_orchestrator import (
 logger = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 4
 plan_orchestrator = AgentPlanOrchestrator()
+
+
+@lru_cache(maxsize=1)
+def _base_model() -> ChatOpenAI:
+    """复用无用户状态的基础模型客户端。"""
+    return ChatOpenAI(
+        model=settings.LLM_MODEL,
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_BASE_URL,
+        temperature=0,
+        timeout=getattr(settings, "AI_MODEL_TIMEOUT_SECONDS", 8),
+        max_retries=0,
+    )
 
 
 # 负责 emit progress 相关逻辑，并返回处理结果。
@@ -616,6 +630,9 @@ def _run_multi_intent_readonly_plan(
         elif step.intent is AgentIntent.ADMIN_BOOKING_QUERY:
             tool_name = "list_pending_bookings"
             arguments = {"limit": 50}
+        elif step.intent is AgentIntent.USER_QUERY:
+            tool_name = "list_users"
+            arguments = {"limit": 50}
         else:
             raise ValueError(f"Unsupported readonly intent: {step.intent.value}")
 
@@ -1179,6 +1196,84 @@ def _run_explicit_booking_query(
         ) from exc
 
 
+# 执行explicit user query相关数据或业务逻辑。
+def _run_explicit_user_query(
+    question: str,
+    db: Session,
+    current_user: User,
+    conversation: Any,
+    progress_callback: Any = None,
+    route: RouteDecision | None = None,
+) -> dict[str, Any] | None:
+    decision = route or route_request(question)
+    if decision.intent is not AgentIntent.USER_QUERY:
+        return None
+
+    try:
+        _emit_progress(progress_callback, "intent", "正在识别用户查询需求", 15)
+        tool = _tool_from_name(db, current_user, "list_users")
+        _emit_progress(
+            progress_callback,
+            "query_users",
+            "正在查询用户列表",
+            45,
+            tool="list_users",
+        )
+        raw = json.loads(invoke_tool(tool, {"limit": 50}))
+        if not raw.get("ok"):
+            return _persist_ai_result(
+                db,
+                conversation,
+                current_user,
+                {
+                    "content": raw.get("error") or "暂时无法查询用户列表。",
+                    "tool_calls": [{"name": tool.name, "ok": False}],
+                    "blocks": [],
+                    "confirmation_token": None,
+                },
+                "user_query",
+                tool.name,
+                "failed",
+            )
+
+        data = raw.get("data") or {}
+        rows = data.get("items") or []
+        count = data.get("count", len(rows))
+        blocks = [{
+            "type": "user_list",
+            "title": "用户列表",
+            "items": rows,
+            "count": count,
+            "total": data.get("total", count),
+        }]
+        _emit_progress(progress_callback, "response", "正在整理用户列表结果", 90)
+        content = "当前没有可查询的用户。" if count == 0 else f"当前查询到 {count} 个用户。"
+        return _persist_ai_result(
+            db,
+            conversation,
+            current_user,
+            {
+                "content": content,
+                "tool_calls": [{"name": tool.name, "ok": True}],
+                "blocks": blocks,
+                "confirmation_token": None,
+            },
+            "user_query",
+            tool.name,
+            "success",
+        )
+    except BusinessExceptions:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Explicit user query failed", extra={"user_id": current_user.id})
+        raise BusinessExceptions(
+            message="用户列表查询暂时失败，请稍后重试。",
+            code=HTTPStatus.SERVICE_UNAVAILABLE,
+        ) from exc
+
+
 # 执行explicit admin booking query相关数据或业务逻辑。
 def _run_explicit_admin_booking_query(
     question: str,
@@ -1679,6 +1774,32 @@ def _checkpoint_message_count(graph: Any, config: dict[str, Any]) -> int:
         return 0
 
 
+def _run_lightweight_response(
+    question: str,
+    history: list[Any],
+    db: Session,
+    current_user: User,
+    conversation: Any,
+    token_callback: Any = None,
+) -> dict[str, Any]:
+    """处理普通对话，不触发工具和预约工作流。"""
+    messages = [SystemMessage(content=SYSTEM_PROMPT), *history]
+    model = _base_model()
+    response = model.invoke(messages)
+    content = _chunk_text_content(response)
+    if token_callback and content:
+        _emit_text_deltas(token_callback, content)
+    return _persist_ai_result(
+        db,
+        conversation,
+        current_user,
+        {"content": content, "tool_calls": [], "blocks": [], "confirmation_token": None},
+        "chat_fast_path",
+        None,
+        "success",
+    )
+
+
 # 负责 chat llm 相关逻辑，并返回处理结果。
 def chat_llm(
     data: ChatRequest,
@@ -1858,6 +1979,18 @@ def chat_llm(
     if explicit_booking_query_result is not None:
         _emit_text_deltas(token_callback, explicit_booking_query_result.get("content", ""))
         return explicit_booking_query_result
+
+    explicit_user_query_result = _run_explicit_user_query(
+        question,
+        db,
+        current_user,
+        conversation,
+        progress_callback,
+        route,
+    )
+    if explicit_user_query_result is not None:
+        _emit_text_deltas(token_callback, explicit_user_query_result.get("content", ""))
+        return explicit_user_query_result
 
     explicit_admin_booking_query_result = _run_explicit_admin_booking_query(
         question,

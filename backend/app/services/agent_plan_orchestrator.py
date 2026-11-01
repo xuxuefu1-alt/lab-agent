@@ -33,6 +33,7 @@ class AgentPlanOrchestrator:
         AgentIntent.BOOKING_QUERY,
         AgentIntent.RESOURCE_QUERY,
         AgentIntent.ADMIN_BOOKING_QUERY,
+        AgentIntent.USER_QUERY,
     })
 
     @classmethod

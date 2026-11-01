@@ -3,6 +3,9 @@ dist
 .env
 .env.local
 .env.*
+!.env.example
+!backend/.env.example
+!fronted/.env.example
 .idea
 .vscode
 *.log
@@ -17,6 +20,8 @@ backend/uploads/
 backend/data/chroma/
 backend/data/models/
 backend/*.log
+backend/*.db
+*.sqlite3
 
 # Frontend local/build output
 fronted/node_modules/

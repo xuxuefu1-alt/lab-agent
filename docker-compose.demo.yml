@@ -1,0 +1,73 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: lab_agent
+      MYSQL_USER: lab_agent
+      MYSQL_PASSWORD: lab_agent_demo
+      MYSQL_ROOT_PASSWORD: root_demo_only
+    ports:
+      - "3306:3306"
+    volumes:
+      - demo_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -proot_demo_only"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis/redis-stack-server:7.4.0-v3
+    command: ["redis-stack-server", "--appendonly", "yes", "--requirepass", "lag-dev-redis"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - demo_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a lag-dev-redis ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      mysql_url: mysql+pymysql://lab_agent:lab_agent_demo@mysql:3306/lab_agent
+      APP_ENV: demo
+      JWT_SECRT_KEY: demo-only-change-me
+      JWT_EXPIRE_HOURS: 24
+      JWT_ALGORITHM: HS256
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      REDIS_URL: redis://:lag-dev-redis@redis:6379/0
+      CORS_ORIGINS: http://localhost:8080
+      AI_RAG_PREWARM: "false"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  frontend:
+    build:
+      context: ./fronted
+      args:
+        VITE_API_BASE_URL: /api
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+
+volumes:
+  demo_mysql_data:
+  demo_redis_data:

@@ -1,18 +1,22 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    mysql_url: str  # 数据库
+    """集中管理服务配置，并为本地 Demo 提供可运行的默认值。"""
+
+    mysql_url: str = "sqlite:///./lab_agent.db"
     APP_ENV: str = "development"
-    JWT_SECRT_KEY: str  # 密钥
-    JWT_EXPIRE_HOURS: int = 24  # 过期时间
-    JWT_ALGORITHM: str 
-    LLM_API_KEY:str
-    LLM_BASE_URL:str
-    LLM_MODEL:str
+    JWT_SECRT_KEY: str = "dev-only-change-me"
+    JWT_EXPIRE_HOURS: int = 24
+    JWT_ALGORITHM: str = "HS256"
+    LLM_API_KEY: str | None = None
+    LLM_BASE_URL: str = "https://api.deepseek.com"
+    LLM_MODEL: str = "deepseek-chat"
     REDIS_URL: str | None = None
     AI_CHECKPOINT_PREFIX: str = "lab_agent_checkpoint"
     AI_CHECKPOINT_TTL_MINUTES: int = 1440
@@ -23,27 +27,30 @@ class Settings(BaseSettings):
     AI_INTENT_ROUTER_TIMEOUT_SECONDS: int = 10
     OTEL_SERVICE_NAME: str = "lab-agent-backend"
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     model_config = SettingsConfigDict(
-        env_file=BASE_DIR / ".env", env_file_encoding="utf-8"
+        env_file=BASE_DIR / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
 
 settings = Settings()
 
-UPLOAD_DIR = BASE_DIR / "uploads"  # 创建上传文件
-# 上传文件兜底 防止没有upload文件夹
+UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_FILE_SIZE = 100 * 1024 * 1024
 ALLOWED_FILE = [
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".pdf",
-  ".doc",
-  ".docx",
-  ".xls",
-  ".xlsx",
-  ".zip",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".zip",
 ]

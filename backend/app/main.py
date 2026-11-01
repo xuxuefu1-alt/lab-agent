@@ -47,10 +47,7 @@ def cleanup_ai_state_on_startup():
         cleanup_expired_state(db)
     finally:
         db.close()
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173"
-]
+origins = [item.strip() for item in settings.CORS_ORIGINS.split(",") if item.strip()]
 # 允许跨域中间件
 app.add_middleware(
     CORSMiddleware,
@@ -71,3 +68,9 @@ app.add_exception_handler(Exception,global_exceptions_hadler)
 # 提供根路径响应并返回服务基础状态。
 def root():
     return {"message": "fastapi正在运行"}
+
+
+@app.get("/healthz")
+def healthz():
+    """提供部署平台使用的轻量健康检查，不依赖外部服务。"""
+    return {"status": "ok", "service": settings.OTEL_SERVICE_NAME}

@@ -4,7 +4,10 @@ from sqlalchemy import create_engine, DateTime
 from app.config import settings
 from datetime import datetime
 
-engine = create_engine(settings.mysql_url)
+engine_kwargs = {}
+if settings.mysql_url.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+engine = create_engine(settings.mysql_url, **engine_kwargs)
 
 # 数据库session会话连接工厂
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
