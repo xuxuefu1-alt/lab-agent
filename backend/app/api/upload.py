@@ -13,6 +13,7 @@ router = APIRouter(prefix="/files", tags=["files"])
 
 
 @router.post("/upload")
+# 负责 upload file 相关逻辑，并返回处理结果。
 async def upload_file(file: UploadFile = File(...)):
     if not file.filename:
         raise BusinessExceptions(message="文件名不能为空", code=HTTPStatus.UNPROCESSABLE_ENTITY)

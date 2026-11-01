@@ -11,6 +11,7 @@ _checkpointer = None
 _checkpointer_lock = Lock()
 
 
+# 初始化checkpointer相关数据或业务逻辑。
 def initialize_checkpointer():
     global _checkpointer
     if _checkpointer is not None:
@@ -44,20 +45,24 @@ def initialize_checkpointer():
         return _checkpointer
 
 
+# 获取checkpointer相关数据或业务逻辑。
 def get_checkpointer():
     return initialize_checkpointer()
 
 
+# 负责 thread id 相关逻辑，并返回处理结果。
 def thread_id(user_id: int, conversation_key: str, workflow: str) -> str:
     return f"ai:{workflow}:user:{user_id}:conversation:{conversation_key}"
 
 
+# 清理thread相关数据或业务逻辑。
 def clear_thread(checkpointer, checkpoint_thread_id: str) -> None:
     delete_thread = getattr(checkpointer, "delete_thread", None)
     if delete_thread is not None:
         delete_thread(checkpoint_thread_id)
 
 
+# 判断是否存在thread相关数据或业务逻辑。
 def has_thread(checkpointer, checkpoint_thread_id: str) -> bool:
     get_tuple = getattr(checkpointer, "get_tuple", None)
     if get_tuple is None:

@@ -10,6 +10,7 @@ from app.utils.jwt import decode_access_token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
+# 获取current user相关数据或业务逻辑。
 def get_current_user(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> User:
@@ -42,6 +43,7 @@ def get_current_user(
     return user
 
 
+# 负责 require admin 相关逻辑，并返回处理结果。
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role != "admin":
         raise HTTPException(

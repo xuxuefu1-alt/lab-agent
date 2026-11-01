@@ -10,6 +10,7 @@ from app.schemas.auth import LoginResponse
 from app.schemas.user import UserResponse
 
 
+# 负责 login 相关逻辑，并返回处理结果。
 def login(db: Session, data: LoginRequest):
     user = db.query(User).filter(User.username == data.username).first()
     if not user:
@@ -25,6 +26,7 @@ def login(db: Session, data: LoginRequest):
     return LoginResponse(token=token, user=UserResponse.model_validate(user))
 
 
+# 负责 register 相关逻辑，并返回处理结果。
 def register(db: Session, data: registerRquest):
     user = db.query(User).filter(User.username == data.username).first()
     if user:

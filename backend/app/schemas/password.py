@@ -16,6 +16,7 @@ class ChangePasswordRequest(BaseModel):
 
 
     @model_validator(mode="after")
+    # 校验passwords model相关数据或业务逻辑。
     def validate_passwords_model(self):
         self.validate_passwords()
         return self

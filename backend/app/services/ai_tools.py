@@ -90,6 +90,7 @@ class CancelBookingToolArgs(BaseModel):
     booking_id: int = Field(..., ge=1)
 
 
+# 负责 laboratory item 相关逻辑，并返回处理结果。
 def _laboratory_item(item: Laboratory) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -101,6 +102,7 @@ def _laboratory_item(item: Laboratory) -> dict[str, Any]:
     }
 
 
+# 负责 equipment item 相关逻辑，并返回处理结果。
 def _equipment_item(item: Equipment) -> dict[str, Any]:
     reservable = item.status == 1 and item.maintenance_status in NORMAL_MAINTENANCE_STATUSES
     return {
@@ -116,6 +118,7 @@ def _equipment_item(item: Equipment) -> dict[str, Any]:
     }
 
 
+# 负责 user item 相关逻辑，并返回处理结果。
 def _user_item(item: User) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -128,6 +131,7 @@ def _user_item(item: User) -> dict[str, Any]:
     }
 
 
+# 负责 permission summary 相关逻辑，并返回处理结果。
 def _permission_summary(user: User) -> dict[str, Any]:
     is_admin = user.role == "admin"
     return {
@@ -145,6 +149,7 @@ def _permission_summary(user: User) -> dict[str, Any]:
     }
 
 
+# 负责 booking item 相关逻辑，并返回处理结果。
 def _booking_item(db: Session, item: Booking) -> dict[str, Any]:
     laboratory = db.query(Laboratory).filter(Laboratory.id == item.laboratory_id).first()
     equipment_ids = item.equipment_ids
@@ -171,6 +176,7 @@ def _booking_item(db: Session, item: Booking) -> dict[str, Any]:
     }
 
 
+# 负责 encode confirmation 相关逻辑，并返回处理结果。
 def _encode_confirmation(payload: dict[str, Any]) -> str:
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     body = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
@@ -178,6 +184,7 @@ def _encode_confirmation(payload: dict[str, Any]) -> str:
     return f"{body}.{signature}"
 
 
+# 负责 verify booking confirmation 相关逻辑，并返回处理结果。
 def verify_booking_confirmation(token: str, current_user: User) -> dict[str, Any]:
     try:
         body, signature = token.split(".", 1)
@@ -199,6 +206,7 @@ def verify_booking_confirmation(token: str, current_user: User) -> dict[str, Any
     return payload
 
 
+# 负责 verify cancel booking confirmation 相关逻辑，并返回处理结果。
 def verify_cancel_booking_confirmation(token: str, current_user: User) -> dict[str, Any]:
     try:
         body, signature = token.split(".", 1)
@@ -222,6 +230,7 @@ def verify_cancel_booking_confirmation(token: str, current_user: User) -> dict[s
     return payload
 
 
+# 负责 active laboratories 相关逻辑，并返回处理结果。
 def _active_laboratories(db: Session, keyword: str | None, limit: int) -> list[Laboratory]:
     query = db.query(Laboratory).filter(Laboratory.status == 1)
     if keyword:
@@ -230,6 +239,7 @@ def _active_laboratories(db: Session, keyword: str | None, limit: int) -> list[L
     return query.order_by(Laboratory.id).limit(limit).all()
 
 
+# 负责 equipment query 相关逻辑，并返回处理结果。
 def _equipment_query(db: Session, laboratory_id: int | None, keyword: str | None, limit: int):
     query = db.query(Equipment)
     if laboratory_id is not None:
@@ -245,11 +255,13 @@ def _equipment_query(db: Session, laboratory_id: int | None, keyword: str | None
     return query.order_by(Equipment.id).limit(limit)
 
 
+# 负责 list open laboratories 相关逻辑，并返回处理结果。
 def _list_open_laboratories(db: Session, keyword: str | None, limit: int) -> dict[str, Any]:
     rows = _active_laboratories(db, keyword, limit)
     return {"items": [_laboratory_item(row) for row in rows], "count": len(rows)}
 
 
+# 负责 list laboratory equipment 相关逻辑，并返回处理结果。
 def _list_laboratory_equipment(
     db: Session,
     laboratory_id: int | None,
@@ -276,6 +288,7 @@ def _list_laboratory_equipment(
     return {"items": items, "count": len(items)}
 
 
+# 负责 list open laboratories with equipment 相关逻辑，并返回处理结果。
 def _list_open_laboratories_with_equipment(
     db: Session,
     laboratory_keyword: str | None,
@@ -331,6 +344,7 @@ def _list_open_laboratories_with_equipment(
     return {"items": items, "count": len(items)}
 
 
+# 负责 list users 相关逻辑，并返回处理结果。
 def _list_users(
     db: Session,
     keyword: str | None,
@@ -356,6 +370,7 @@ def _list_users(
     return {"items": [_user_item(row) for row in rows], "count": len(rows), "total": total}
 
 
+# 负责 list my bookings 相关逻辑，并返回处理结果。
 def _list_my_bookings(
     db: Session,
     user_id: int,
@@ -371,6 +386,7 @@ def _list_my_bookings(
     return {"items": [_booking_item(db, row) for row in rows], "count": len(rows)}
 
 
+# 负责 list pending bookings 相关逻辑，并返回处理结果。
 def _list_pending_bookings(
     db: Session,
     status: str,
@@ -397,6 +413,7 @@ def _list_pending_bookings(
     return {"items": items, "count": len(items)}
 
 
+# 负责 tool failure 相关逻辑，并返回处理结果。
 def _tool_failure(db: Session, exc: Exception) -> str:
     try:
         db.rollback()
@@ -422,9 +439,11 @@ def _tool_failure(db: Session, exc: Exception) -> str:
 def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
     """Build request-scoped read-only tools; identity and DB access stay server-side."""
 
+    # 负责 account is enabled 相关逻辑，并返回处理结果。
     def account_is_enabled() -> bool:
         return current_user.status == 1
 
+    # 列出open laboratories相关数据或业务逻辑。
     def list_open_laboratories(keyword: str | None = None, limit: int = 20) -> str:
         if not account_is_enabled():
             return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
@@ -433,6 +452,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
+    # 列出laboratory equipment相关数据或业务逻辑。
     def list_laboratory_equipment(
         laboratory_id: int | None = None,
         keyword: str | None = None,
@@ -448,6 +468,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
+    # 列出open laboratories with equipment相关数据或业务逻辑。
     def list_open_laboratories_with_equipment(
         laboratory_keyword: str | None = None,
         equipment_keyword: str | None = None,
@@ -468,6 +489,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
+    # 获取current user profile相关数据或业务逻辑。
     def get_current_user_profile() -> str:
         if not account_is_enabled():
             return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
@@ -476,6 +498,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
             ensure_ascii=False,
         )
 
+    # 获取user profile相关数据或业务逻辑。
     def get_user_profile(user_id: int) -> str:
         if not account_is_enabled():
             return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
@@ -492,6 +515,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
+    # 列出users相关数据或业务逻辑。
     def list_users(
         keyword: str | None = None,
         role: str | None = None,
@@ -511,6 +535,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
+    # 列出my bookings相关数据或业务逻辑。
     def list_my_bookings(status: str | None = None, limit: int = 20) -> str:
         if not account_is_enabled():
             return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)
@@ -522,6 +547,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
+    # 列出pending bookings相关数据或业务逻辑。
     def list_pending_bookings(
         status: str = "待审核",
         time_from: str | None = None,
@@ -543,6 +569,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
+    # 负责 prepare create booking 相关逻辑，并返回处理结果。
     def prepare_create_booking(
         laboratory_id: int,
         equipment_ids: list[int] | None = None,
@@ -605,6 +632,7 @@ def build_tools(db: Session, current_user: User) -> list[StructuredTool]:
         except Exception as exc:
             return _tool_failure(db, exc)
 
+    # 负责 prepare cancel booking 相关逻辑，并返回处理结果。
     def prepare_cancel_booking(booking_id: int) -> str:
         if not account_is_enabled():
             return json.dumps({"ok": False, "error": "当前账户已停用。"}, ensure_ascii=False)

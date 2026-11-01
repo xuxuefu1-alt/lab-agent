@@ -20,6 +20,7 @@ WORKFLOW_POLICY_VERSION = "booking-policy-v2"
 WORKFLOW_MAX_RETRIES = 2
 
 
+# 负责 redis client 相关逻辑，并返回处理结果。
 def _redis_client():
     if not settings.REDIS_URL:
         return None
@@ -32,6 +33,7 @@ def _redis_client():
         return None
 
 
+# 获取idempotency lock相关数据或业务逻辑。
 def acquire_idempotency_lock(key: str, ttl_seconds: int = 600) -> bool:
     client = _redis_client()
     if client is None:
@@ -44,6 +46,7 @@ def acquire_idempotency_lock(key: str, ttl_seconds: int = 600) -> bool:
         return True
 
 
+# 释放idempotency lock相关数据或业务逻辑。
 def release_idempotency_lock(key: str) -> None:
     client = _redis_client()
     if client is None:
@@ -55,6 +58,7 @@ def release_idempotency_lock(key: str) -> None:
         logger.exception("Redis idempotency lock release failed")
 
 
+# 获取or create conversation相关数据或业务逻辑。
 def get_or_create_conversation(
     db: Session,
     current_user: User,
@@ -84,6 +88,7 @@ def get_or_create_conversation(
     return conversation
 
 
+# 加载recent messages相关数据或业务逻辑。
 def load_recent_messages(db: Session, conversation_id: int) -> list[AiMessage]:
     limit = max(2, settings.AI_CONTEXT_MESSAGE_LIMIT)
     rows = (
@@ -96,6 +101,7 @@ def load_recent_messages(db: Session, conversation_id: int) -> list[AiMessage]:
     return list(reversed(rows))
 
 
+# 构建summary context相关数据或业务逻辑。
 def build_summary_context(conversation: AiConversation) -> str | None:
     if not conversation.summary:
         return None
@@ -106,6 +112,7 @@ def build_summary_context(conversation: AiConversation) -> str | None:
     )
 
 
+# 刷新conversation summary相关数据或业务逻辑。
 def refresh_conversation_summary(
     db: Session,
     conversation: AiConversation,
@@ -139,6 +146,7 @@ def refresh_conversation_summary(
     return conversation.summary
 
 
+# 负责 append message 相关逻辑，并返回处理结果。
 def append_message(
     db: Session,
     conversation: AiConversation,
@@ -170,12 +178,14 @@ def append_message(
     return message
 
 
+# 保存summary相关数据或业务逻辑。
 def save_summary(db: Session, conversation: AiConversation, summary: str | None) -> None:
     if summary:
         conversation.summary = summary[:4000]
         db.add(conversation)
 
 
+# 保存audit相关数据或业务逻辑。
 def save_audit(
     db: Session,
     current_user: User,
@@ -201,6 +211,7 @@ def save_audit(
     )
 
 
+# 保存workflow state相关数据或业务逻辑。
 def save_workflow_state(
     db: Session,
     conversation: AiConversation,
@@ -284,6 +295,7 @@ def record_workflow_failure(
     return allowed
 
 
+# 负责 workflow phase 相关逻辑，并返回处理结果。
 def _workflow_phase(workflow_type: str, state: dict[str, Any], status: str) -> str:
     if status in {"expired", "consumed", "reset", "deleted"}:
         return status
@@ -294,6 +306,7 @@ def _workflow_phase(workflow_type: str, state: dict[str, Any], status: str) -> s
     return status
 
 
+# 负责 workflow completion 相关逻辑，并返回处理结果。
 def _workflow_completion(state: dict[str, Any]) -> dict[str, bool]:
     booking = state.get("booking") or state.get("draft") or {}
     time_range = booking.get("time_range")
@@ -310,12 +323,14 @@ def _workflow_completion(state: dict[str, Any]) -> dict[str, bool]:
     }
 
 
+# 负责 workflow missing fields 相关逻辑，并返回处理结果。
 def _workflow_missing_fields(state: dict[str, Any]) -> list[str]:
     completion = _workflow_completion(state)
     required = {"laboratory": "laboratory", "date": "date", "time": "time"}
     return [label for key, label in required.items() if not completion[key]]
 
 
+# 获取workflow state相关数据或业务逻辑。
 def get_workflow_state(
     db: Session,
     current_user: User,
@@ -347,6 +362,7 @@ def get_workflow_state(
         return workflow, {}
 
 
+# 消费workflow state相关数据或业务逻辑。
 def consume_workflow_state(
     db: Session,
     current_user: User,
@@ -378,6 +394,7 @@ def consume_workflow_state(
     return workflow
 
 
+# 清理expired state相关数据或业务逻辑。
 def cleanup_expired_state(db: Session, retention_days: int = 30) -> int:
     cutoff = datetime.now() - timedelta(days=retention_days)
     deleted = (

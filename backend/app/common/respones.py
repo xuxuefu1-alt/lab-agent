@@ -8,10 +8,12 @@ class Respones(BaseModel):
     data: Any
 
     @classmethod
+    # 负责 success 相关逻辑，并返回处理结果。
     def success(cls, message: str = "请求成功", data: Any = None):
         return cls(code=200, message=message, data=data)
 
     @classmethod
+    # 负责 error 相关逻辑，并返回处理结果。
     def error(cls, code: int = 500, message: str = "请求失败", data: Any = None):
         return cls(code=code, message=message,data=data)
 

@@ -10,6 +10,7 @@ engine = create_engine(settings.mysql_url)
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
 
 
+# 获取db相关数据或业务逻辑。
 def get_db():
     db = SessionLocal()
     try:

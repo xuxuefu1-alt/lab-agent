@@ -15,6 +15,7 @@ class PendingBookingQuery:
     time_to: str | None = None
     time_label: str = "全部时间"
 
+    # 负责 as tool params 相关逻辑，并返回处理结果。
     def as_tool_params(self) -> dict[str, str]:
         params: dict[str, str] = {"status": self.status}
         if self.time_from:
@@ -24,6 +25,7 @@ class PendingBookingQuery:
         return params
 
 
+# 负责 day bounds 相关逻辑，并返回处理结果。
 def _day_bounds(day: date) -> tuple[str, str]:
     next_day = day + timedelta(days=1)
     return (
@@ -32,6 +34,7 @@ def _day_bounds(day: date) -> tuple[str, str]:
     )
 
 
+# 负责 month bounds 相关逻辑，并返回处理结果。
 def _month_bounds(day: date) -> tuple[str, str]:
     start = day.replace(day=1)
     if start.month == 12:
@@ -44,6 +47,7 @@ def _month_bounds(day: date) -> tuple[str, str]:
     )
 
 
+# 解析explicit date相关数据或业务逻辑。
 def _parse_explicit_date(text: str, now: date) -> date | None:
     match = re.search(r"(?<!\d)(20\d{2})[-/]?(\d{1,2})[-/]?(\d{1,2})(?!\d)", text)
     if match:
@@ -71,6 +75,7 @@ def _parse_explicit_date(text: str, now: date) -> date | None:
     return None
 
 
+# 解析并确定pending booking query相关数据或业务逻辑。
 def resolve_pending_booking_query(text: str, now: datetime | None = None) -> PendingBookingQuery:
     current = now or datetime.now(LOCAL_TZ)
     if current.tzinfo is not None:

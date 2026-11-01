@@ -62,6 +62,7 @@ class AgentPlanOrchestrator:
         visited: set[str] = set()
         dependencies = {step.step_id: set(step.depends_on) for step in plan.steps}
 
+        # 递归访问依赖节点并检查依赖关系。
         def visit(step_id: str) -> bool:
             if step_id in visiting:
                 return False
@@ -79,6 +80,7 @@ class AgentPlanOrchestrator:
         return None
 
     @classmethod
+    # 负责 supports query then cancel 相关逻辑，并返回处理结果。
     def supports_query_then_cancel(cls, route: RouteDecision) -> bool:
         if route.intent is not AgentIntent.MULTI_INTENT or route.plan is None:
             return False
@@ -95,6 +97,7 @@ class AgentPlanOrchestrator:
         )
 
     @staticmethod
+    # 解析selection相关数据或业务逻辑。
     def parse_selection(question: str, candidates: list[dict[str, Any]]) -> int | None:
         compact = re.sub(r"\s+", "", question or "")
         ordinal = re.search(r"第([1-9][0-9]*)条", compact)
@@ -121,6 +124,7 @@ class AgentPlanOrchestrator:
         return None
 
     @classmethod
+    # 负责 supports readonly plan 相关逻辑，并返回处理结果。
     def supports_readonly_plan(cls, route: RouteDecision) -> bool:
         if route.intent is not AgentIntent.MULTI_INTENT or route.plan is None:
             return False
@@ -137,6 +141,7 @@ class AgentPlanOrchestrator:
             for step in steps
         )
 
+    # 执行readonly plan相关数据或业务逻辑。
     def execute_readonly_plan(
         self,
         route: RouteDecision,
@@ -155,6 +160,7 @@ class AgentPlanOrchestrator:
             plan_status="planned",
         )
 
+        # 执行计划中的单个步骤并封装结果。
         def run_step(step) -> tuple[Any, QueryPlanResult]:
             record_plan_event(
                 plan_id=plan_id,
@@ -216,6 +222,7 @@ class AgentPlanOrchestrator:
         return ReadonlyPlanResult(plan_id, mode, output_steps, failed_step)
 
     @staticmethod
+    # 构建state相关数据或业务逻辑。
     def build_state(
         route: RouteDecision,
         question: str,
@@ -237,6 +244,7 @@ class AgentPlanOrchestrator:
             "source_question": question,
         }
 
+    # 执行query then cancel相关数据或业务逻辑。
     def execute_query_then_cancel(
         self,
         route: RouteDecision,

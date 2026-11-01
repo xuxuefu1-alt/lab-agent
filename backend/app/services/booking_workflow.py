@@ -73,6 +73,7 @@ LOCAL_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
 NORMAL_EQUIPMENT_STATUSES = {"正常", "Normal", "姝ｅ父"}
 
 
+# 判断resource query intent相关数据或业务逻辑。
 def is_resource_query_intent(text: str) -> bool:
     normalized = (text or "").strip()
     if not any(phrase in normalized for phrase in RESOURCE_QUERY_PHRASES):
@@ -93,6 +94,7 @@ def is_resource_query_intent(text: str) -> bool:
     )
 
 
+# 判断create booking intent相关数据或业务逻辑。
 def is_create_booking_intent(text: str) -> bool:
     normalized = (text or "").strip()
     if is_resource_query_intent(normalized):
@@ -106,6 +108,7 @@ def is_create_booking_intent(text: str) -> bool:
     )
 
 
+# 判断booking query intent相关数据或业务逻辑。
 def is_booking_query_intent(text: str) -> bool:
     normalized = (text or "").strip()
     if any(phrase in normalized for phrase in ("取消预约", "取消我的预约", "撤销预约", "取消预订")):
@@ -113,11 +116,13 @@ def is_booking_query_intent(text: str) -> bool:
     return any(phrase in normalized for phrase in BOOKING_QUERY_PHRASES)
 
 
+# 判断booking resume intent相关数据或业务逻辑。
 def is_booking_resume_intent(text: str) -> bool:
     normalized = (text or "").strip().casefold()
     return normalized in BOOKING_RESUME_PHRASES or normalized == "继续"
 
 
+# 解析date相关数据或业务逻辑。
 def _parse_date(text: str, now: datetime) -> datetime.date | None:
     explicit = re.search(
         r"(20\d{2})[-/\u5e74](\d{1,2})[-/\u6708](\d{1,2})\u65e5?",
@@ -186,6 +191,7 @@ def _parse_date(text: str, now: datetime) -> datetime.date | None:
     return None
 
 
+# 负责 to 24 hour 相关逻辑，并返回处理结果。
 def _to_24_hour(hour: int, meridiem: str | None) -> int:
     if meridiem in PM_WORDS and hour < 12:
         return hour + 12
@@ -194,6 +200,7 @@ def _to_24_hour(hour: int, meridiem: str | None) -> int:
     return hour
 
 
+# 解析time range相关数据或业务逻辑。
 def _parse_time_range(text: str) -> tuple[int, int, int, int] | None:
     text = unicodedata.normalize("NFKC", text or "").translate(
         str.maketrans({"–": "-", "—": "-", "−": "-", "－": "-", "〜": "~", "～": "~"})
@@ -223,6 +230,7 @@ def _parse_time_range(text: str) -> tuple[int, int, int, int] | None:
     return None
 
 
+# 规范化phrase相关数据或业务逻辑。
 def _normalize_phrase(value: str) -> str:
     return re.sub(r"[\s,，。.!！？?：:、]", "", value).casefold()
 
@@ -230,6 +238,7 @@ def _normalize_phrase(value: str) -> str:
 LABORATORY_GENERIC_WORDS = ("实验室", "实验", "实验室的")
 
 
+# 负责 laboratory stem 相关逻辑，并返回处理结果。
 def _laboratory_stem(value: str) -> str:
     normalized = _normalize_phrase(value)
     for suffix in LABORATORY_GENERIC_WORDS:
@@ -238,6 +247,7 @@ def _laboratory_stem(value: str) -> str:
     return normalized
 
 
+# 负责 laboratory query score 相关逻辑，并返回处理结果。
 def _laboratory_query_score(text: str, laboratory: Laboratory) -> int:
     query = _normalize_phrase(text)
     name = _normalize_phrase(laboratory.name or "")
@@ -264,6 +274,7 @@ def _laboratory_query_score(text: str, laboratory: Laboratory) -> int:
     return 0
 
 
+# 负责 resolve laboratory 相关逻辑，并返回处理结果。
 def _resolve_laboratory(
     db: Session,
     text: str,
@@ -272,6 +283,7 @@ def _resolve_laboratory(
     return result.laboratory, result.ambiguous, list(result.candidates)
 
 
+# 负责 equipment stem 相关逻辑，并返回处理结果。
 def _equipment_stem(value: str) -> str:
     normalized = _normalize_phrase(value)
     for suffix in ("设备", "仪器"):
@@ -280,6 +292,7 @@ def _equipment_stem(value: str) -> str:
     return normalized
 
 
+# 负责 equipment query score 相关逻辑，并返回处理结果。
 def _equipment_query_score(text: str, equipment: Equipment) -> int:
     query = _normalize_phrase(text)
     name = _normalize_phrase(equipment.name or "")
@@ -302,6 +315,7 @@ def _equipment_query_score(text: str, equipment: Equipment) -> int:
     return 0
 
 
+# 负责 resolve equipment 相关逻辑，并返回处理结果。
 def _resolve_equipment(
     db: Session,
     text: str,
@@ -334,6 +348,7 @@ def _resolve_equipment(
     return None, False, []
 
 
+# 解析并确定booking request相关数据或业务逻辑。
 def resolve_booking_request(
     db: Session,
     text: str,

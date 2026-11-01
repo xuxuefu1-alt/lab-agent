@@ -13,6 +13,7 @@ router = APIRouter(prefix="/laboratories", tags=["laboratories"])
 
 
 @router.post("", response_model=success_response(LaboratoryResponse))
+# 创建laboratory相关数据或业务逻辑。
 async def create_laboratory(
     laboratory: LaboratoryCreate,
     db: Session = Depends(get_db),
@@ -23,6 +24,7 @@ async def create_laboratory(
 
 
 @router.get("/{laboratory_id}", response_model=success_response(LaboratoryResponse))
+# 获取laboratory相关数据或业务逻辑。
 async def get_laboratory(
     laboratory_id: int,
     db: Session = Depends(get_db),
@@ -35,6 +37,7 @@ async def get_laboratory(
 
 
 @router.get("", response_model=success_response(dict))
+# 获取laboratories相关数据或业务逻辑。
 async def get_laboratories(
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=1000),
@@ -63,6 +66,7 @@ async def get_laboratories(
 
 
 @router.put("/{laboratory_id}", response_model=success_response(LaboratoryResponse))
+# 更新laboratory相关数据或业务逻辑。
 async def update_laboratory(
     laboratory_id: int,
     laboratory: LaboratoryUpdate,
@@ -74,6 +78,7 @@ async def update_laboratory(
 
 
 @router.delete("/{laboratory_id}", response_model=success_response(dict))
+# 删除laboratory相关数据或业务逻辑。
 async def delete_laboratory(
     laboratory_id: int,
     db: Session = Depends(get_db),

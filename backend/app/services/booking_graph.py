@@ -23,7 +23,9 @@ class BookingGraphState(TypedDict, total=False):
     result: dict[str, Any]
 
 
+# 构建booking graph相关数据或业务逻辑。
 def build_booking_graph(db: Session, current_user: User, checkpointer):
+    # 解析并确定and prepare相关数据或业务逻辑。
     def resolve_and_prepare(state: BookingGraphState) -> dict[str, Any]:
         if state.get("intent") not in {"booking_create", "booking_resume"}:
             return {

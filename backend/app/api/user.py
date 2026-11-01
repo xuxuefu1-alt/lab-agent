@@ -13,12 +13,14 @@ router = APIRouter(prefix="/user", tags=["用户信息"])
 
 # 获取用户信息
 @router.get("/info")
+# 获取user info相关数据或业务逻辑。
 def get_user_info(current_user: User = Depends(get_current_user)):
     return Respones.success(data=user_services.get_user_info(current_user))
 
 
 # 更新用户信息
 @router.put("/update")
+# 更新user info相关数据或业务逻辑。
 def update_user_info(
     data: UpdateUserRequest,
     current_user:User=Depends(get_current_user),

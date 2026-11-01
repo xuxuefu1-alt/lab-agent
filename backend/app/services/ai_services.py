@@ -51,6 +51,7 @@ MAX_TOOL_ROUNDS = 4
 plan_orchestrator = AgentPlanOrchestrator()
 
 
+# 负责 emit progress 相关逻辑，并返回处理结果。
 def _emit_progress(
     callback: Any,
     phase: str,
@@ -82,10 +83,12 @@ def _emit_text_deltas(callback: Any, content: str, chunk_size: int = 12) -> None
         })
 
 
+# 负责 confirmation token hash 相关逻辑，并返回处理结果。
 def _confirmation_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+# 重置conversation相关数据或业务逻辑。
 def reset_conversation(client_key: str | None, db: Session, current_user: User) -> dict[str, Any]:
     old_key = (client_key or "default")[:100]
     conversation = (
@@ -127,6 +130,7 @@ def reset_conversation(client_key: str | None, db: Session, current_user: User) 
     }
 
 
+# 删除conversation相关数据或业务逻辑。
 def delete_conversation(client_key: str, db: Session, current_user: User) -> dict[str, Any]:
     conversation_key = (client_key or "").strip()[:100]
     if not conversation_key:
@@ -187,6 +191,7 @@ SYSTEM_PROMPT = """
 """.strip()
 
 
+# 规范化history相关数据或业务逻辑。
 def _normalize_history(data: ChatRequest) -> list[Any]:
     history: list[Any] = []
     for message in (data.messages or [])[-20:]:
@@ -205,6 +210,7 @@ def _normalize_history(data: ChatRequest) -> list[Any]:
     return history
 
 
+# 负责 reference block 相关逻辑，并返回处理结果。
 def _reference_block(question: str) -> str:
     reference = kb_services.search(query=question)
     if not reference:
@@ -215,6 +221,7 @@ def _reference_block(question: str) -> str:
     )
 
 
+# 构建blocks相关数据或业务逻辑。
 def _build_blocks(tool_messages: list[ToolMessage]) -> list[dict[str, Any]]:
     latest_blocks: dict[str, dict[str, Any]] = {}
     for message in tool_messages:
@@ -297,6 +304,7 @@ def _build_blocks(tool_messages: list[ToolMessage]) -> list[dict[str, Any]]:
     return list(latest_blocks.values())
 
 
+# 负责 compact content 相关逻辑，并返回处理结果。
 def _compact_content(content: str, blocks: list[dict[str, Any]]) -> str:
     if not blocks:
         return content
@@ -325,6 +333,7 @@ def _compact_content(content: str, blocks: list[dict[str, Any]]) -> str:
     return " ".join(summaries) or content
 
 
+# 判断explicit confirmation相关数据或业务逻辑。
 def _is_explicit_confirmation(value: str) -> bool:
     return value.strip().lower() in {
         "确认",
@@ -338,10 +347,12 @@ def _is_explicit_confirmation(value: str) -> bool:
     }
 
 
+# 判断explicit rejection相关数据或业务逻辑。
 def _is_explicit_rejection(value: str) -> bool:
     return is_explicit_booking_rejection(value)
 
 
+# 判断cancel confirmation相关数据或业务逻辑。
 def _is_cancel_confirmation(value: str) -> bool:
     return value.strip().lower() in {
         "确认取消",
@@ -353,6 +364,7 @@ def _is_cancel_confirmation(value: str) -> bool:
     }
 
 
+# 判断cancel rejection相关数据或业务逻辑。
 def _is_cancel_rejection(value: str) -> bool:
     return value.strip().lower() in {
         "保留预约",
@@ -363,6 +375,7 @@ def _is_cancel_rejection(value: str) -> bool:
     }
 
 
+# 负责 confirmation token from messages 相关逻辑，并返回处理结果。
 def _confirmation_token_from_messages(tool_messages: list[ToolMessage]) -> str | None:
     for message in reversed(tool_messages):
         if message.name not in {"prepare_create_booking", "prepare_cancel_booking"}:
@@ -376,6 +389,7 @@ def _confirmation_token_from_messages(tool_messages: list[ToolMessage]) -> str |
     return None
 
 
+# 负责 tool from name 相关逻辑，并返回处理结果。
 def _tool_from_name(db: Session, current_user: User, name: str):
     return next(tool for tool in build_tools(db, current_user) if tool.name == name)
 
@@ -426,6 +440,7 @@ def _booking_context(
     }
 
 
+# 负责 persist ai result 相关逻辑，并返回处理结果。
 def _persist_ai_result(
     db: Session,
     conversation: Any,
@@ -459,6 +474,7 @@ def _persist_ai_result(
     return result
 
 
+# 执行route clarification相关数据或业务逻辑。
 def _run_route_clarification(
     route: RouteDecision,
     db: Session,
@@ -496,6 +512,7 @@ def _run_route_clarification(
     )
 
 
+# 执行multi intent query then cancel相关数据或业务逻辑。
 def _run_multi_intent_query_then_cancel(
     route: RouteDecision,
     question: str,
@@ -512,6 +529,7 @@ def _run_multi_intent_query_then_cancel(
 
     _emit_progress(progress_callback, "plan", "正在执行第一步：查询你的预约", 15)
 
+    # 负责 query step 相关逻辑，并返回处理结果。
     def query_step() -> QueryPlanResult:
         try:
             tool = _tool_from_name(db, current_user, "list_my_bookings")
@@ -538,6 +556,7 @@ def _run_multi_intent_query_then_cancel(
             raw=raw,
         )
 
+    # 保存state相关数据或业务逻辑。
     def save_state(state: dict[str, Any]) -> None:
         ai_memory_service.save_workflow_state(
             db,
@@ -547,6 +566,7 @@ def _run_multi_intent_query_then_cancel(
             state,
         )
 
+    # 负责 persist result 相关逻辑，并返回处理结果。
     def persist_result(result: dict[str, Any], tool_name: str, status: str) -> dict[str, Any]:
         return _persist_ai_result(
             db,
@@ -581,6 +601,7 @@ def _run_multi_intent_readonly_plan(
 
     slots = route.slots or {}
 
+    # 负责 callback for 相关逻辑，并返回处理结果。
     def callback_for(step, session: Session) -> QueryPlanResult:
         if step.intent is AgentIntent.BOOKING_QUERY:
             tool_name = "list_my_bookings"
@@ -608,7 +629,9 @@ def _run_multi_intent_readonly_plan(
 
     callbacks: dict[str, Any] = {}
     for step in route.plan.steps:
+        # 构造callback相关数据或业务逻辑。
         def make_callback(plan_step=step):
+            # 执行计划中的单个步骤并封装结果。
             def run_step() -> QueryPlanResult:
                 # Parallel plans must not share the request-scoped SQLAlchemy session.
                 session = SessionLocal()
@@ -661,6 +684,7 @@ def _run_multi_intent_readonly_plan(
     )
 
 
+# 负责 resume multi intent cancel 相关逻辑，并返回处理结果。
 def _resume_multi_intent_cancel(
     question: str,
     booking_context: dict[str, Any],
@@ -715,6 +739,7 @@ def _resume_multi_intent_cancel(
     return result
 
 
+# 负责 apply route workflow control 相关逻辑，并返回处理结果。
 def _apply_route_workflow_control(
     route: RouteDecision,
     booking_context: dict[str, Any],
@@ -774,6 +799,7 @@ def _apply_route_workflow_control(
     )
 
 
+# 执行explicit cancel workflow相关数据或业务逻辑。
 def _run_explicit_cancel_workflow(
     question: str,
     db: Session,
@@ -979,6 +1005,7 @@ def _run_explicit_cancel_workflow(
         ) from exc
 
 
+# 执行explicit resource query相关数据或业务逻辑。
 def _run_explicit_resource_query(
     question: str,
     db: Session,
@@ -1059,6 +1086,7 @@ def _run_explicit_resource_query(
         ) from exc
 
 
+# 执行explicit booking query相关数据或业务逻辑。
 def _run_explicit_booking_query(
     question: str,
     db: Session,
@@ -1151,6 +1179,7 @@ def _run_explicit_booking_query(
         ) from exc
 
 
+# 执行explicit admin booking query相关数据或业务逻辑。
 def _run_explicit_admin_booking_query(
     question: str,
     db: Session,
@@ -1240,6 +1269,7 @@ def _run_explicit_admin_booking_query(
         ) from exc
 
 
+# 执行explicit booking workflow相关数据或业务逻辑。
 def _run_explicit_booking_workflow(
     question: str,
     db: Session,
@@ -1381,6 +1411,7 @@ def _run_explicit_booking_workflow(
         ) from exc
 
 
+# 执行confirmed booking相关数据或业务逻辑。
 def _execute_confirmed_booking(
     token: str,
     question: str,
@@ -1486,6 +1517,7 @@ def _execute_confirmed_booking(
         ai_memory_service.release_idempotency_lock(lock_key)
 
 
+# 执行confirmed cancellation相关数据或业务逻辑。
 def _execute_confirmed_cancellation(
     token: str,
     question: str,
@@ -1566,6 +1598,7 @@ def _execute_confirmed_cancellation(
         ai_memory_service.release_idempotency_lock(lock_key)
 
 
+# 负责 chunk text content 相关逻辑，并返回处理结果。
 def _chunk_text_content(message: Any) -> str:
     content = getattr(message, "content", "")
     if isinstance(content, str):
@@ -1579,6 +1612,7 @@ def _chunk_text_content(message: Any) -> str:
     return ""
 
 
+# 构建graph相关数据或业务逻辑。
 def _build_graph(
     db: Session,
     current_user: User,
@@ -1603,6 +1637,7 @@ def _build_graph(
     if tools:
         model = model.bind_tools(tools)
 
+    # 负责 call model 相关逻辑，并返回处理结果。
     def call_model(state: MessagesState):
         if token_callback is None:
             return {"messages": [model.invoke(state["messages"])]}
@@ -1632,6 +1667,7 @@ def _build_graph(
     return graph.compile(checkpointer=checkpointer or get_checkpointer())
 
 
+# 负责 checkpoint message count 相关逻辑，并返回处理结果。
 def _checkpoint_message_count(graph: Any, config: dict[str, Any]) -> int:
     try:
         snapshot = graph.get_state(config)
@@ -1643,6 +1679,7 @@ def _checkpoint_message_count(graph: Any, config: dict[str, Any]) -> int:
         return 0
 
 
+# 负责 chat llm 相关逻辑，并返回处理结果。
 def chat_llm(
     data: ChatRequest,
     db: Session,
@@ -2002,6 +2039,7 @@ def chat_llm(
         ) from exc
 
 
+# 负责 tool message ok 相关逻辑，并返回处理结果。
 def _tool_message_ok(message: ToolMessage) -> bool:
     try:
         return bool(json.loads(message.content).get("ok"))

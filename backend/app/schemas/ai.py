@@ -15,6 +15,7 @@ class ChatRequest(BaseModel):
     confirmation_token: str | None = Field(None, max_length=4096)
 
     @model_validator(mode="after")
+    # 校验input相关数据或业务逻辑。
     def validate_input(self):
         if not self.message and not self.messages:
             raise ValueError("message or messages is required")

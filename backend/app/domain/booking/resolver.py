@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.model.laboratory import Laboratory
 
 
+# 规范化entity text相关数据或业务逻辑。
 def normalize_entity_text(value: str) -> str:
     return re.sub(r"[\s,，。.!！？?：:、]", "", value or "").casefold()
 
@@ -22,6 +23,7 @@ class LaboratoryResolution:
     confidence: float
 
 
+# 负责 score location match 相关逻辑，并返回处理结果。
 def _score_location_match(query: str, laboratory: Laboratory) -> int:
     location = normalize_entity_text(laboratory.location or "")
     if location and location in query and any(word in query for word in ("实验室", "实验")):
@@ -29,6 +31,7 @@ def _score_location_match(query: str, laboratory: Laboratory) -> int:
     return 0
 
 
+# 解析并确定laboratory相关数据或业务逻辑。
 def resolve_laboratory(db: Session, text: str) -> LaboratoryResolution:
     query = normalize_entity_text(text)
     laboratories = (

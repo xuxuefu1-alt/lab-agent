@@ -12,6 +12,7 @@ from app.model.user import User
 ACTIVE_BOOKING_STATUSES = ("待审核", "已批准")
 
 
+# 负责 empty state 相关逻辑，并返回处理结果。
 def _empty_state() -> dict:
     return {
         "availability_status": "available",
@@ -29,6 +30,7 @@ def _empty_state() -> dict:
     }
 
 
+# 负责 parse 相关逻辑，并返回处理结果。
 def _parse(value: str) -> datetime | None:
     try:
         return datetime.strptime(value, "%Y-%m-%d %H:%M")
@@ -36,6 +38,7 @@ def _parse(value: str) -> datetime | None:
         return None
 
 
+# 构建state相关数据或业务逻辑。
 def _build_state(rows: list[Booking], now: datetime, users: dict[int, User]) -> dict:
     state = _empty_state()
     parsed_rows = []
@@ -82,6 +85,7 @@ def _build_state(rows: list[Booking], now: datetime, users: dict[int, User]) -> 
     return state
 
 
+# 负责 reservation detail 相关逻辑，并返回处理结果。
 def _reservation_detail(row: Booking, users: dict[int, User]) -> dict:
     applicant = users.get(row.user_id)
     approver = users.get(row.approved_by) if row.approved_by else None
@@ -97,6 +101,7 @@ def _reservation_detail(row: Booking, users: dict[int, User]) -> dict:
     }
 
 
+# 获取laboratory availability相关数据或业务逻辑。
 def get_laboratory_availability(db: Session, laboratory_ids: list[int]) -> dict[int, dict]:
     if not laboratory_ids:
         return {}
@@ -119,6 +124,7 @@ def get_laboratory_availability(db: Session, laboratory_ids: list[int]) -> dict[
     return {laboratory_id: _build_state(items, now, users) for laboratory_id, items in grouped.items()}
 
 
+# 获取equipment availability相关数据或业务逻辑。
 def get_equipment_availability(db: Session, equipment_ids: list[int]) -> dict[int, dict]:
     if not equipment_ids:
         return {}

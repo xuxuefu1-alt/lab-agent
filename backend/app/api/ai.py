@@ -20,18 +20,22 @@ from app.common.respones import Respones
 router = APIRouter(prefix="/ai", tags=["AI聊天"])
 
 
+# 负责 sse event 相关逻辑，并返回处理结果。
 def _sse_event(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+# 负责 stream chat events 相关逻辑，并返回处理结果。
 def _stream_chat_events(data: ChatRequest, user_id: int, request_id: str | None = None) -> Iterator[str]:
     events: queue.Queue[dict] = queue.Queue()
     finished = threading.Event()
     run_id = uuid4().hex
 
+    # 向调用方发送事件或增量结果。
     def emit(payload: dict) -> None:
         events.put(payload)
 
+    # 在后台执行当前请求的异步处理。
     def worker() -> None:
         request_token = REQUEST_ID.set(request_id or run_id)
         db = None
@@ -85,6 +89,7 @@ def _stream_chat_events(data: ChatRequest, user_id: int, request_id: str | None 
 
 
 @router.post("/chat")
+# 负责 chat 相关逻辑，并返回处理结果。
 def chat(
     data: ChatRequest,
     db: Session = Depends(get_db),
@@ -102,6 +107,7 @@ def chat(
 
 
 @router.post("/chat/stream")
+# 负责 chat stream 相关逻辑，并返回处理结果。
 def chat_stream(
     data: ChatRequest,
     request: Request,
@@ -123,6 +129,7 @@ def chat_stream(
 
 
 @router.post("/conversations/{conversation_id}/reset")
+# 重置conversation相关数据或业务逻辑。
 def reset_conversation(
     conversation_id: str,
     db: Session = Depends(get_db),
@@ -133,6 +140,7 @@ def reset_conversation(
 
 
 @router.delete("/conversations/{conversation_id}")
+# 删除conversation相关数据或业务逻辑。
 def delete_conversation(
     conversation_id: str,
     db: Session = Depends(get_db),

@@ -30,5 +30,6 @@ class Booking(Base):
     )
 
     @property
+    # 解析并校验设备 ID 列表。
     def equipment_ids(self) -> list[int]:
         return [link.equipment_id for link in self.equipment_links]

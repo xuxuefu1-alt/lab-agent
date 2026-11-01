@@ -25,6 +25,7 @@ NORMAL_MAINTENANCE_STATUSES = {"正常", "Normal", "姝ｅ父"}
 
 class BookingService:
     @staticmethod
+    # 解析time相关数据或业务逻辑。
     def _parse_time(value: str) -> datetime:
         try:
             return datetime.strptime(value, "%Y-%m-%d %H:%M")
@@ -35,6 +36,7 @@ class BookingService:
             ) from exc
 
     @staticmethod
+    # 负责 validate resources 相关逻辑，并返回处理结果。
     def _validate_resources(db: Session, laboratory_id: int, equipment_ids: list[int]) -> list[int]:
         laboratory = db.query(Laboratory).filter(
             Laboratory.id == laboratory_id,
@@ -75,6 +77,7 @@ class BookingService:
         return normalized_ids
 
     @staticmethod
+    # 负责 ensure no conflict 相关逻辑，并返回处理结果。
     def _ensure_no_conflict(
         db: Session,
         laboratory_id: int,
@@ -120,6 +123,7 @@ class BookingService:
                 )
 
     @staticmethod
+    # 负责 replace equipment links 相关逻辑，并返回处理结果。
     def _replace_equipment_links(db: Session, booking: Booking, equipment_ids: list[int]) -> None:
         booking.equipment_links.clear()
         booking.equipment_links.extend(
@@ -128,6 +132,7 @@ class BookingService:
         db.add(booking)
 
     @staticmethod
+    # 创建booking相关数据或业务逻辑。
     def create_booking(db: Session, user_id: int, booking: BookingCreate) -> Booking:
         start = BookingService._parse_time(booking.start_time)
         end = BookingService._parse_time(booking.end_time)
@@ -177,6 +182,7 @@ class BookingService:
         return db_booking
 
     @staticmethod
+    # 获取booking by id相关数据或业务逻辑。
     def get_booking_by_id(db: Session, booking_id: int) -> Booking:
         booking = db.query(Booking).filter(Booking.id == booking_id).first()
         if not booking:
@@ -184,30 +190,37 @@ class BookingService:
         return booking
 
     @staticmethod
+    # 获取all bookings相关数据或业务逻辑。
     def get_all_bookings(db: Session, skip: int = 0, limit: int = 10) -> list[Booking]:
         return db.query(Booking).offset(skip).limit(limit).all()
 
     @staticmethod
+    # 获取bookings count相关数据或业务逻辑。
     def get_bookings_count(db: Session) -> int:
         return db.query(Booking).count()
 
     @staticmethod
+    # 获取user bookings相关数据或业务逻辑。
     def get_user_bookings(db: Session, user_id: int, skip: int = 0, limit: int = 10) -> list[Booking]:
         return db.query(Booking).filter(Booking.user_id == user_id).offset(skip).limit(limit).all()
 
     @staticmethod
+    # 获取user bookings count相关数据或业务逻辑。
     def get_user_bookings_count(db: Session, user_id: int) -> int:
         return db.query(Booking).filter(Booking.user_id == user_id).count()
 
     @staticmethod
+    # 获取bookings by status相关数据或业务逻辑。
     def get_bookings_by_status(db: Session, status: str, skip: int = 0, limit: int = 10) -> list[Booking]:
         return db.query(Booking).filter(Booking.status == status).offset(skip).limit(limit).all()
 
     @staticmethod
+    # 获取bookings by laboratory相关数据或业务逻辑。
     def get_bookings_by_laboratory(db: Session, laboratory_id: int, skip: int = 0, limit: int = 10) -> list[Booking]:
         return db.query(Booking).filter(Booking.laboratory_id == laboratory_id).offset(skip).limit(limit).all()
 
     @staticmethod
+    # 列出bookings相关数据或业务逻辑。
     def list_bookings(
         db: Session,
         skip: int = 0,
@@ -240,6 +253,7 @@ class BookingService:
         return rows, total
 
     @staticmethod
+    # 更新booking相关数据或业务逻辑。
     def update_booking(db: Session, booking_id: int, booking: BookingUpdate) -> Booking:
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         if db_booking.status != PENDING:
@@ -285,6 +299,7 @@ class BookingService:
         return db_booking
 
     @staticmethod
+    # 负责 approve booking 相关逻辑，并返回处理结果。
     def approve_booking(db: Session, booking_id: int, approve_data: BookingApprove, approved_by: int) -> Booking:
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         if db_booking.status != PENDING:
@@ -305,6 +320,7 @@ class BookingService:
         return db_booking
 
     @staticmethod
+    # 负责 cancel booking 相关逻辑，并返回处理结果。
     def cancel_booking(
         db: Session,
         booking_id: int,
@@ -329,6 +345,7 @@ class BookingService:
         return {"message": "预约已取消。"}
 
     @staticmethod
+    # 删除booking相关数据或业务逻辑。
     def delete_booking(db: Session, booking_id: int) -> dict:
         db_booking = BookingService.get_booking_by_id(db, booking_id)
         db.delete(db_booking)

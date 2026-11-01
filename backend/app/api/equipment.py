@@ -14,6 +14,7 @@ router = APIRouter(prefix="/equipment", tags=["equipment"])
 
 
 @router.post("", response_model=success_response(EquipmentResponse))
+# 创建equipment相关数据或业务逻辑。
 async def create_equipment(
     equipment: EquipmentCreate,
     db: Session = Depends(get_db),
@@ -24,6 +25,7 @@ async def create_equipment(
 
 
 @router.get("/{equipment_id}", response_model=success_response(EquipmentResponse))
+# 获取equipment相关数据或业务逻辑。
 async def get_equipment(
     equipment_id: int,
     db: Session = Depends(get_db),
@@ -41,6 +43,7 @@ async def get_equipment(
 
 
 @router.get("", response_model=success_response(dict))
+# 获取equipment list相关数据或业务逻辑。
 async def get_equipment_list(
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=1000),
@@ -95,6 +98,7 @@ async def get_equipment_list(
 
 
 @router.put("/{equipment_id}", response_model=success_response(EquipmentResponse))
+# 更新equipment相关数据或业务逻辑。
 async def update_equipment(
     equipment_id: int,
     equipment: EquipmentUpdate,
@@ -106,6 +110,7 @@ async def update_equipment(
 
 
 @router.delete("/{equipment_id}", response_model=success_response(dict))
+# 删除equipment相关数据或业务逻辑。
 async def delete_equipment(
     equipment_id: int,
     db: Session = Depends(get_db),

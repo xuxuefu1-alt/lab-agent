@@ -151,6 +151,7 @@ slots 只能包含 laboratory_text、equipment_text、date_text、time_text、bo
 
 
 @lru_cache(maxsize=1)
+# 负责 router model 相关逻辑，并返回处理结果。
 def _router_model() -> ChatOpenAI:
     return ChatOpenAI(
         model=settings.LLM_MODEL,
@@ -162,6 +163,7 @@ def _router_model() -> ChatOpenAI:
     )
 
 
+# 负责 message text 相关逻辑，并返回处理结果。
 def _message_text(content: Any) -> str:
     if isinstance(content, str):
         return content.strip()
@@ -174,6 +176,7 @@ def _message_text(content: Any) -> str:
     return ""
 
 
+# 解码extraction相关数据或业务逻辑。
 def _decode_extraction(content: str) -> IntentExtraction:
     cleaned = content.strip()
     if cleaned.startswith("```"):
@@ -182,10 +185,12 @@ def _decode_extraction(content: str) -> IntentExtraction:
     return IntentExtraction.model_validate(payload)
 
 
+# 判断grounded slot span相关数据或业务逻辑。
 def _is_grounded_slot_span(message: str, value: str | None) -> bool:
     if not value:
         return True
 
+    # 负责 normalize 相关逻辑，并返回处理结果。
     def normalize(text: str) -> str:
         normalized = unicodedata.normalize("NFKC", text).translate(
             str.maketrans({"–": "-", "—": "-", "−": "-", "－": "-", "〜": "~", "～": "~"})
@@ -195,11 +200,13 @@ def _is_grounded_slot_span(message: str, value: str | None) -> bool:
     return normalize(value) in normalize(message)
 
 
+# 规范化control utterance相关数据或业务逻辑。
 def _normalize_control_utterance(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", text or "").casefold()
     return re.sub(r"[\s\W_]+", "", normalized)
 
 
+# 判断explicit booking rejection相关数据或业务逻辑。
 def is_explicit_booking_rejection(text: str) -> bool:
     normalized = _normalize_control_utterance(text)
     return normalized in {
@@ -228,6 +235,7 @@ def is_explicit_booking_rejection(text: str) -> bool:
     }
 
 
+# 判断bare temporal fragment相关数据或业务逻辑。
 def _is_bare_temporal_fragment(text: str) -> bool:
     compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text or "").strip())
     if not compact or len(compact) > 40:
@@ -243,6 +251,7 @@ def _is_bare_temporal_fragment(text: str) -> bool:
     return has_date or (bool(re.search(r"\d", compact)) and has_time)
 
 
+# 判断explicit negated booking action相关数据或业务逻辑。
 def _is_explicit_negated_booking_action(text: str) -> bool:
     normalized = _normalize_control_utterance(text)
     if not normalized:
@@ -268,6 +277,7 @@ def _is_explicit_negated_booking_action(text: str) -> bool:
     return bool(direct_negation or reversal)
 
 
+# 负责 infer multi intent plan 相关逻辑，并返回处理结果。
 def _infer_multi_intent_plan(message: str) -> IntentPlan | None:
     normalized = _normalize_control_utterance(message)
     if (
@@ -455,6 +465,7 @@ def interpret_turn(
         )
 
 
+# 判断cancel booking request相关数据或业务逻辑。
 def is_cancel_booking_request(text: str) -> bool:
     normalized = re.sub(r"\s+", "", text or "").casefold()
     if any(value in normalized for value in ("取消预约", "取消预订", "撤销预约", "撤销预订")):
@@ -464,6 +475,7 @@ def is_cancel_booking_request(text: str) -> bool:
     )
 
 
+# 判断admin booking query request相关数据或业务逻辑。
 def is_admin_booking_query_request(text: str) -> bool:
     normalized = re.sub(r"\s+", "", text or "").casefold()
     return any(

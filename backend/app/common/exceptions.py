@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class BusinessExceptions(Exception):
+    # 初始化对象状态和依赖。
     def __init__(self, message: str, code: int = 400):
         if not 400 <= code <= 599:
             raise ValueError("Business exception code must be an HTTP 4xx or 5xx status")

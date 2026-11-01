@@ -56,6 +56,7 @@ AGENT_PLAN_EVENTS = Counter(
 
 
 class JsonFormatter(logging.Formatter):
+    # 将输入记录转换为结构化输出。
     def format(self, record: logging.LogRecord) -> str:
         payload = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -85,6 +86,7 @@ class JsonFormatter(logging.Formatter):
 
 
 class RequestContextFilter(logging.Filter):
+    # 补充日志上下文并决定当前记录是否继续处理。
     def filter(self, record: logging.LogRecord) -> bool:
         request_id = REQUEST_ID.get()
         if request_id != "-":
@@ -95,9 +97,11 @@ class RequestContextFilter(logging.Filter):
 class RequestMetricsMiddleware:
     """ASGI middleware that preserves streaming and bounds metric labels."""
 
+    # 初始化对象状态和依赖。
     def __init__(self, app):
         self.app = app
 
+    # 处理对象调用请求并返回结果。
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -111,6 +115,7 @@ class RequestMetricsMiddleware:
         started = time.perf_counter()
         status = 500
 
+        # 发送响应并确保请求 ID 被正确返回。
         async def send_with_request_id(message):
             nonlocal status
             if message["type"] == "http.response.start":
@@ -134,6 +139,7 @@ class RequestMetricsMiddleware:
             REQUEST_ID.reset(token)
 
 
+# 配置logging相关数据或业务逻辑。
 def configure_logging() -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -151,6 +157,7 @@ def configure_logging() -> None:
         root.addHandler(handler)
 
 
+# 配置tracing相关数据或业务逻辑。
 def configure_tracing(app, service_name: str, endpoint: str | None) -> None:
     if not endpoint:
         return
@@ -199,10 +206,12 @@ def configure_tracing(app, service_name: str, endpoint: str | None) -> None:
         )
 
 
+# 获取tracer相关数据或业务逻辑。
 def get_tracer(name: str):
     return trace.get_tracer(name)
 
 
+# 负责 mark span error 相关逻辑，并返回处理结果。
 def mark_span_error(span, error: Exception) -> None:
     span.set_attribute("error.type", type(error).__name__)
     span.set_status(Status(StatusCode.ERROR))
@@ -242,6 +251,7 @@ def record_plan_event(
     )
 
 
+# 调用tool相关数据或业务逻辑。
 def invoke_tool(tool, arguments):
     with get_tracer("lab-agent.tools").start_as_current_span(
         "agent.tool.invoke",
@@ -268,6 +278,7 @@ def invoke_tool(tool, arguments):
             raise
 
 
+# 安装observability相关数据或业务逻辑。
 def install_observability(app, service_name: str, otlp_endpoint: str | None) -> None:
     configure_logging()
     app.add_middleware(RequestMetricsMiddleware)

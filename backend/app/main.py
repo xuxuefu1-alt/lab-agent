@@ -39,6 +39,7 @@ install_observability(
 
 
 @app.on_event("startup")
+# 清理ai state on startup相关数据或业务逻辑。
 def cleanup_ai_state_on_startup():
     initialize_checkpointer()
     db = SessionLocal()
@@ -67,5 +68,6 @@ app.add_exception_handler(Exception,global_exceptions_hadler)
 
 
 @app.get("/")
+# 提供根路径响应并返回服务基础状态。
 def root():
     return {"message": "fastapi正在运行"}

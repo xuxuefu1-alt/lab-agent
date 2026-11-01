@@ -30,6 +30,7 @@ def _get_embedding_function():
     return _embedding_fn
 
 
+# 获取collection相关数据或业务逻辑。
 def get_collection() -> Collection:
     # 向量库初始化
     global _collection
