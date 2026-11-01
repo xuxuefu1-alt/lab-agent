@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from functools import lru_cache
@@ -27,7 +27,7 @@ from app.services.booking_workflow import (
 
 
 logger = logging.getLogger(__name__)
-ROUTER_VERSION = "intent-router-v1.7"
+ROUTER_VERSION = "intent-router-v1.8"
 
 
 class AgentIntent(StrEnum):
@@ -109,6 +109,7 @@ class RouteDecision:
     clarification_question: str | None = None
     fallback_reason: str | None = None
     plan: IntentPlan | None = None
+    route_source: str = "model"
 
 
 ROUTER_SYSTEM_PROMPT = """你是实验室预约系统的意图分类器，只负责分类和抽取用户明确说出的文本槽位。
@@ -277,16 +278,82 @@ def _is_explicit_negated_booking_action(text: str) -> bool:
     return bool(direct_negation or reversal)
 
 
+def _is_cancel_rule_or_hypothetical(normalized: str) -> bool:
+    return any(
+        phrase in normalized
+        for phrase in (
+            "怎么取消",
+            "如何取消",
+            "取消规则",
+            "取消流程",
+            "取消后会",
+            "如果取消",
+            "假如取消",
+            "取消吗",
+            "能否取消",
+            "是否取消",
+            "可不可以取消",
+            "能不能取消",
+        )
+    )
+
+
+def _has_positive_cancel_action(normalized: str) -> bool:
+    if _is_cancel_rule_or_hypothetical(normalized):
+        return False
+    if re.search(
+        r"(?:不想|不要|别|不需要|不打算)(?:帮我|替我)?(?:取消|撤销)",
+        normalized,
+    ):
+        return False
+    if "改主意" in normalized and any(
+        phrase in normalized for phrase in ("不要操作", "不操作了", "先不操作", "不要取消")
+    ):
+        return False
+    return any(
+        phrase in normalized
+        for phrase in (
+            "帮我取消",
+            "帮忙取消",
+            "请取消",
+            "给我取消",
+            "我要取消",
+            "取消一下",
+            "取消下",
+            "取消我的预约",
+            "取消预约",
+            "撤销我的预约",
+            "撤销预约",
+            "帮我撤销",
+            "帮我撤掉",
+            "取消掉",
+        )
+    )
+
+
+def _has_booking_query_action(normalized: str) -> bool:
+    query_verbs = (
+        "查看",
+        "查询",
+        "查下",
+        "查一下",
+        "看看",
+        "看下",
+        "看一下",
+        "帮我看",
+        "列出",
+        "有哪些",
+    )
+    booking_terms = ("预约", "预订", "预约记录", "预订记录")
+    return any(verb in normalized for verb in query_verbs) and any(
+        term in normalized for term in booking_terms
+    )
+
+
 # 负责 infer multi intent plan 相关逻辑，并返回处理结果。
 def _infer_multi_intent_plan(message: str) -> IntentPlan | None:
     normalized = _normalize_control_utterance(message)
-    if (
-        any(token in normalized for token in (
-            "看下我的预约", "查看我的预约", "查询我的预约", "我的预约",
-            "目前有哪些预约", "有哪些预约", "预约记录",
-        ))
-        and any(token in normalized for token in ("取消", "撤销"))
-    ):
+    if _has_booking_query_action(normalized) and _has_positive_cancel_action(normalized):
         return IntentPlan(
             mode="sequential_dependent",
             steps=[
@@ -308,6 +375,29 @@ def _infer_multi_intent_plan(message: str) -> IntentPlan | None:
             ],
         )
     return None
+
+
+def _deterministic_multi_intent_route(message: str, source: str) -> RouteDecision | None:
+    plan = _infer_multi_intent_plan(message)
+    if plan is None:
+        return None
+    return RouteDecision(
+        intent=AgentIntent.MULTI_INTENT,
+        deterministic=True,
+        speech_act=SpeechAct.REQUEST_ACTION,
+        slots={
+            "laboratory_text": None,
+            "equipment_text": None,
+            "date_text": None,
+            "time_text": None,
+            "booking_status": None,
+            "booking_id_text": None,
+            "query_scope": "本人",
+        },
+        parameters={"route_source": source},
+        plan=plan,
+        route_source=source,
+    )
 
 
 def interpret_turn(
@@ -358,6 +448,23 @@ def interpret_turn(
                 speech_act=SpeechAct.NEGATED,
                 clarification_question="好的，我不会发起预约或取消操作。",
             )
+
+    deterministic_multi_intent = _deterministic_multi_intent_route(
+        message,
+        "deterministic_multi_intent",
+    )
+    if deterministic_multi_intent is not None:
+        logger.info(
+            "Agent intent classified deterministically",
+            extra={
+                "router_version": ROUTER_VERSION,
+                "intent": deterministic_multi_intent.intent.value,
+                "speech_act": deterministic_multi_intent.speech_act.value,
+                "route_source": deterministic_multi_intent.route_source,
+                "fallback": False,
+            },
+        )
+        return deterministic_multi_intent
 
     business_now = now or datetime.now(LOCAL_TZ)
     context = {
@@ -433,6 +540,11 @@ def interpret_turn(
                 else extraction.clarification_question
             ),
             plan=plan,
+            route_source=(
+                "model_reconciled_multi_intent"
+                if plan is not None and intent is AgentIntent.MULTI_INTENT
+                else "model"
+            ),
         )
         logger.info(
             "Agent intent classified",
@@ -440,6 +552,7 @@ def interpret_turn(
                 "router_version": ROUTER_VERSION,
                 "intent": decision.intent.value,
                 "speech_act": decision.speech_act.value,
+                "route_source": decision.route_source,
                 "latency_ms": round((time.perf_counter() - started) * 1000),
                 "fallback": False,
             },
@@ -455,6 +568,15 @@ def interpret_turn(
                 "fallback": True,
             },
         )
+        deterministic_fallback = _deterministic_multi_intent_route(
+            message,
+            "deterministic_multi_intent_fallback",
+        )
+        if deterministic_fallback is not None:
+            return replace(
+                deterministic_fallback,
+                fallback_reason="router_unavailable_or_invalid_output",
+            )
         return RouteDecision(
             intent=AgentIntent.UNCLEAR,
             deterministic=True,
@@ -462,6 +584,7 @@ def interpret_turn(
             ambiguous=True,
             clarification_question="我暂时无法稳定识别这条请求。请换一种说法，或明确说明你要查询、创建还是取消预约。",
             fallback_reason="router_unavailable_or_invalid_output",
+            route_source="router_fallback",
         )
 
 

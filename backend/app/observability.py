@@ -25,6 +25,7 @@ SAFE_LOG_FIELDS = (
     "plan_mode",
     "plan_status",
     "plan_step",
+    "route_source",
     "router_version",
     "speech_act",
     "status_code",
