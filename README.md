@@ -81,12 +81,12 @@ GitHub Actions 会在 `master`、`main`、`develop` 分支执行后端测试和�
 
 ## Render 在线体验
 
-仓库根目录提供 `render.yaml`，导入 GitHub 仓库后创建常驻后端和前端 Static Site。后端使用外部持久化 MySQL、Redis Stack，并把 Chroma 向量索引、模型缓存和上传文件存放在 Render 持久磁盘。需要配置 `mysql_url`、`REDIS_URL`、`LLM_API_KEY`、`CORS_ORIGINS` 和前端 `VITE_API_BASE_URL`。Render 后端和持久磁盘为付费资源；不要把本机 `127.0.0.1` 数据库或 Redis 地址填入云端配置。
+仓库根目录提供零费用额度内的 Render Blueprint。云端业务数据使用 MySQL 兼容托管库，Checkpoint 使用 Redis Cloud，RAG 使用 Qdrant Cloud，聊天使用 Gemini API 免费额度。需要配置 `mysql_url`、`REDIS_URL`、`QDRANT_URL`、`QDRANT_API_KEY`、`LLM_API_KEY`、`CORS_ORIGINS` 和前端 `VITE_API_BASE_URL`。免费服务会休眠或有资源配额，不提供生产 SLA；不要把本机 `127.0.0.1` 地址填入云端配置。
 
 详细步骤见 [`docs/开源部署与在线体验指南.md`](docs/开源部署与在线体验指南.md)。
 
 ## 安全要求
 
 - 不提交 `.env`、模型密钥、JWT 密钥、数据库密码和真实业务数据。
-- 生产环境必须替换 JWT 密钥，并使用外部 MySQL/PostgreSQL 与 Redis Stack。
-- 生产部署使用托管数据库与 Redis Stack；本地 Docker Compose 仅用于开发环境复现。
+- 公开体验只使用合成数据；免费 AI API 不要处理隐私或敏感业务数据。
+- 免费托管适合功能体验和作品展示，不提供生产 SLA，也不保证服务永不休眠。

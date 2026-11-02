@@ -15,9 +15,11 @@ class Settings(BaseSettings):
     JWT_EXPIRE_HOURS: int = 24
     JWT_ALGORITHM: str = "HS256"
     LLM_API_KEY: str | None = None
-    LLM_BASE_URL: str = "https://api.deepseek.com"
-    LLM_MODEL: str = "deepseek-chat"
+    LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    LLM_MODEL: str = "gemini-3.1-flash-lite"
     REDIS_URL: str | None = None
+    QDRANT_URL: str | None = None
+    QDRANT_API_KEY: str | None = None
     AI_CHECKPOINT_PREFIX: str = "lab_agent_checkpoint"
     AI_CHECKPOINT_TTL_MINUTES: int = 1440
     AI_CONTEXT_MESSAGE_LIMIT: int = 8
@@ -28,7 +30,6 @@ class Settings(BaseSettings):
     OTEL_SERVICE_NAME: str = "lab-agent-backend"
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
-    AI_DATA_DIR: str = str(BASE_DIR / "data")
     UPLOAD_DIR: str = str(BASE_DIR / "uploads")
 
     model_config = SettingsConfigDict(

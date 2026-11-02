@@ -2,15 +2,11 @@ services:
   - type: web
     name: lab-agent-backend
     runtime: python
-    plan: 1c-2g
+    plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
-    disk:
-      name: lab-agent-data
-      mountPath: /var/data
-      sizeGB: 5
     envVars:
       - key: APP_ENV
         value: production
@@ -18,22 +14,16 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
-      - key: AI_DATA_DIR
-        value: /var/data
-      - key: UPLOAD_DIR
-        value: /var/data/uploads
-      - key: JWT_SECRT_KEY
-        generateValue: true
-      - key: JWT_EXPIRE_HOURS
-        value: "24"
-      - key: JWT_ALGORITHM
-        value: HS256
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
       - key: LLM_API_KEY
         sync: false
       - key: LLM_BASE_URL
-        value: https://api.deepseek.com
+        value: https://generativelanguage.googleapis.com/v1beta/openai/
       - key: LLM_MODEL
-        value: deepseek-chat
+        value: gemini-3.1-flash-lite
       - key: CORS_ORIGINS
         sync: false
 
