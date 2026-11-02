@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     JWT_EXPIRE_HOURS: int = 24
     JWT_ALGORITHM: str = "HS256"
     LLM_API_KEY: str | None = None
-    LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    LLM_MODEL: str = "gemini-3.1-flash-lite"
+    LLM_BASE_URL: str = "https://api.deepseek.com"
+    LLM_MODEL: str = "deepseek-flash"
     REDIS_URL: str | None = None
     QDRANT_URL: str | None = None
     QDRANT_API_KEY: str | None = None

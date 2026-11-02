@@ -81,12 +81,12 @@ GitHub Actions 会在 `master`、`main`、`develop` 分支执行后端测试和�
 
 ## Render 在线体验
 
-仓库根目录提供零费用额度内的 Render Blueprint。云端业务数据使用 MySQL 兼容托管库，Checkpoint 使用 Redis Cloud，RAG 使用 Qdrant Cloud，聊天使用 Gemini API 免费额度。需要配置 `mysql_url`、`REDIS_URL`、`QDRANT_URL`、`QDRANT_API_KEY`、`LLM_API_KEY`、`CORS_ORIGINS` 和前端 `VITE_API_BASE_URL`。免费服务会休眠或有资源配额，不提供生产 SLA；不要把本机 `127.0.0.1` 地址填入云端配置。
+仓库根目录提供 Render 免费基础设施 Blueprint。云端业务数据使用 MySQL 兼容托管库，Checkpoint 使用 Redis Cloud，RAG 使用 Qdrant Cloud，聊天使用项目现有的 DeepSeek API 配置。DeepSeek 模型调用按官方价格计费；免费托管不等于模型调用免费。需要配置 `mysql_url`、`REDIS_URL`、`QDRANT_URL`、`QDRANT_API_KEY`、`LLM_API_KEY`、`CORS_ORIGINS` 和前端 `VITE_API_BASE_URL`。免费服务会休眠或有资源配额，不提供生产 SLA；不要把本机 `127.0.0.1` 地址填入云端配置。
 
 详细步骤见 [`docs/开源部署与在线体验指南.md`](docs/开源部署与在线体验指南.md)。
 
 ## 安全要求
 
 - 不提交 `.env`、模型密钥、JWT 密钥、数据库密码和真实业务数据。
-- 公开体验只使用合成数据；免费 AI API 不要处理隐私或敏感业务数据。
+- 公开体验只使用合成数据；不要向模型 API 发送隐私或敏感业务数据。
 - 免费托管适合功能体验和作品展示，不提供生产 SLA，也不保证服务永不休眠。
